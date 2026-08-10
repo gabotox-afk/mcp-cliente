@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asistente Diagnostica</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #f7f8fc;
+    color: #1b2142;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  #status { padding: .6rem 1rem; font-size: .8rem; color: #6b7299; background: #eef0fa; }
+  #charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: .75rem;
+    padding: 1rem;
+    background: #ffffff;
+    border-bottom: 1px solid #e2e4f0;
+  }
+  .chart-card { background: #f7f8fc; border-radius: 10px; padding: .75rem; }
+  .chart-card h3 { font-size: .75rem; font-weight: 600; color: #4a5178; margin-bottom: .5rem; }
+  .chart-card canvas { max-height: 160px; }
+  #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; }
+  .msg { max-width: 80%; padding: .55rem .8rem; border-radius: 10px; font-size: .88rem; line-height: 1.4; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: #1b2142; color: #fff; }
+  .msg.assistant { align-self: flex-start; background: #eef0fa; color: #1b2142; }
+  .msg.pending { opacity: .6; }
+  #form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid #e2e4f0; background: #fff; }
+  #input { flex: 1; padding: .6rem .75rem; border: 1px solid #d5d8e8; border-radius: 8px; font-size: .88rem; }
+  #input:focus { outline: none; border-color: #3a4599; }
+  #send { padding: .6rem 1.1rem; background: #1b2142; color: #fff; border: none; border-radius: 8px; font-size: .85rem; font-weight: 600; cursor: pointer; }
+  #send:disabled { background: #c7cae0; cursor: not-allowed; }
+</style>
+</head>
+<body>
+  <div id="status">Esperando sesión...</div>
+  <div id="charts"></div>
+  <div id="messages"></div>
+  <form id="form">
+    <input id="input" type="text" placeholder="Preguntá algo sobre la operación de hoy..." disabled autocomplete="off">
+    <button id="send" type="submit" disabled>Enviar</button>
+  </form>
+
+<script>
+  let token = null;
+  let brandId = null;
+  const history = [];
+
+  const statusEl = document.getElementById("status");
+  const chartsEl = document.getElementById("charts");
+  const messagesEl = document.getElementById("messages");
+  const form = document.getElementById("form");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+
+  // En producción, validar event.origin contra el dominio real de Diagnostica
+  // antes de aceptar el mensaje -- acá se omite porque todo corre en localhost.
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "diagnostica-auth") return;
+    token = event.data.token;
+    brandId = event.data.brandId;
+    statusEl.textContent = `Sesión activa (marca: ${brandId})`;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    loadCharts();
+  });
+
+  // Avisa al padre que ya está listo para recibir el token (evita la carrera
+  // donde el padre manda el postMessage antes de que este listener exista).
+  window.parent.postMessage({ type: "diagnostica-widget-ready" }, "*");
+
+  function addMessage(role, text) {
+    const div = document.createElement("div");
+    div.className = `msg ${role}`;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return div;
+  }
+
+  async function loadCharts() {
+    try {
+      const res = await fetch("/dashboard-charts", {
+        headers: { Authorization: `Bearer ${token}`, "X-Brand-Id": brandId },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudieron cargar los gráficos.");
+      for (const chart of data.charts) {
+        const card = document.createElement("div");
+        card.className = "chart-card";
+        const h3 = document.createElement("h3");
+        h3.textContent = chart.title;
+        const canvas = document.createElement("canvas");
+        card.appendChild(h3);
+        card.appendChild(canvas);
+        chartsEl.appendChild(card);
+        new Chart(canvas, {
+          type: chart.type,
+          data: {
+            labels: chart.labels,
+            datasets: [{
+              data: chart.values,
+              backgroundColor: ["#3a4599", "#6b7299", "#a3a8c5", "#1b2142", "#8b93c9", "#c7cae0"],
+            }],
+          },
+          options: { plugins: { legend: { display: chart.type === "doughnut", labels: { font: { size: 10 } } } } },
+        });
+      }
+    } catch (err) {
+      chartsEl.innerHTML = `<div class="chart-card">${err.message}</div>`;
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text || !token) return;
+    input.value = "";
+    sendBtn.disabled = true;
+
+    addMessage("user", text);
+    history.push({ role: "user", content: text });
+    const pending = addMessage("assistant", "Pensando...");
+    pending.classList.add("pending");
+
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Brand-Id": brandId },
+        body: JSON.stringify({ messages: history }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error del servidor.");
+      pending.classList.remove("pending");
+      pending.textContent = data.reply;
+      history.push({ role: "assistant", content: data.reply });
+    } catch (err) {
+      pending.classList.remove("pending");
+      pending.textContent = `Error: ${err.message}`;
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+</script>
+</body>
+</html>
