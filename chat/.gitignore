@@ -1,0 +1,8 @@
+# NUNCA subir: tiene la API key de Anthropic
+.env
+
+node_modules/
+
+# Archivos de prueba temporales
+bench-tmp.ts
+*.tmp.ts

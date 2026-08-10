@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat MCP — demo</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #313a5c; --navy-hover: #262e4a; --panel: #1a2140;
+    --line: #e2e8f0; --muted: #94a3b8; --ink: #1e293b;
+  }
+  html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; }
+  body { background: #f8fafc; color: var(--ink); }
+
+  /* ── Login ───────────────────────────────────────────────────────────── */
+  #login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+  .card { width: 100%; max-width: 380px; }
+  .card h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: .3rem; }
+  .card .sub { color: var(--muted); margin-bottom: 2rem; font-size: .95rem; }
+  label { display: block; font-size: .85rem; font-weight: 500; color: #475569; margin: 1.1rem 0 .35rem; }
+  input { width: 100%; padding: .75rem .9rem; border: 1.5px solid var(--line); border-radius: 9px; font-size: 1rem; outline: none; background: #fff; }
+  input:focus { border-color: #47517a; }
+  button { width: 100%; margin-top: 1.6rem; padding: .85rem; background: var(--navy); color: #fff; border: none; border-radius: 999px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--navy-hover); }
+  button:disabled { background: var(--muted); cursor: not-allowed; }
+  .err { margin-top: 1rem; padding: .7rem .85rem; border-radius: 8px; background: #fee2e2; color: #991b1b; font-size: .9rem; }
+  .hint { margin-top: 1.5rem; font-size: .8rem; color: var(--muted); line-height: 1.6; }
+
+  /* ── Chat ────────────────────────────────────────────────────────────── */
+  #app { display: none; height: 100vh; flex-direction: column; max-width: 780px; margin: 0 auto; }
+  header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .6rem; background: #fff; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #7c86b8; }
+  header .title { font-weight: 700; }
+  header .mode { margin-left: auto; font-size: .75rem; color: var(--muted); }
+  #log { flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+
+  .msg { max-width: 88%; padding: .8rem 1rem; border-radius: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--navy); color: #fff; }
+  .msg.bot { align-self: flex-start; background: #fff; border: 1px solid var(--line); }
+  .msg.bot code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 4px; font-size: .9em; }
+
+  .tools { align-self: flex-start; display: flex; flex-direction: column; gap: .3rem; }
+  .tool { font-size: .8rem; color: #475569; background: #f1f5f9; border: 1px solid var(--line); border-radius: 999px; padding: .3rem .8rem; display: inline-flex; align-items: center; gap: .45rem; }
+  .tool .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid #cbd5e1; border-top-color: var(--navy); animation: sp .7s linear infinite; }
+  .tool.ok .spin { border: none; width: auto; height: auto; animation: none; }
+  .tool.ok .spin::after { content: "✓"; color: #16a34a; font-weight: 700; }
+  .tool.fail .spin { border: none; animation: none; }
+  .tool.fail .spin::after { content: "✕"; color: #dc2626; font-weight: 700; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+
+  .empty { color: var(--muted); text-align: center; margin: auto 0; line-height: 1.8; font-size: .95rem; }
+  .empty b { color: var(--ink); display: block; margin-bottom: .5rem; font-weight: 600; }
+  .sug { display: inline-block; margin: .2rem; padding: .4rem .8rem; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; background: #fff; font-size: .85rem; }
+  .sug:hover { border-color: #47517a; }
+
+  form#send { display: flex; gap: .6rem; padding: 1rem 1.25rem; border-top: 1px solid var(--line); background: #fff; }
+  form#send input { flex: 1; }
+  form#send button { width: auto; margin: 0; padding: .75rem 1.5rem; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="card">
+    <h1>Diagnóstica</h1>
+    <div class="sub">Ingresá para acceder al panel</div>
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" type="email" required value="admin@diagnostica.com" autocomplete="email">
+      <label for="pass">Contraseña</label>
+      <input id="pass" type="password" required value="1234" autocomplete="current-password">
+      <button type="submit" id="loginBtn">Ingresar</button>
+    </form>
+    <div id="loginErr"></div>
+    <div class="hint">
+      Demo: este login simula el de la página de la empresa. El chat no pide
+      credenciales propias — reutiliza el token de esta sesión.
+    </div>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <span class="dot"></span>
+    <span class="title">Asistente de datos</span>
+    <span class="mode" id="mode"></span>
+  </header>
+  <div id="log">
+    <div class="empty" id="empty">
+      <b>Preguntá sobre tus datos</b>
+      <span class="sug">¿Cuántas sesiones hay registradas?</span>
+      <span class="sug">¿Cuántos pacientes tenemos?</span>
+      <span class="sug">Listame los kioscos</span>
+    </div>
+  </div>
+  <form id="send">
+    <input id="q" placeholder="Escribí tu pregunta…" autocomplete="off">
+    <button type="submit" id="sendBtn">Enviar</button>
+  </form>
+</div>
+
+<script>
+let TOKEN = null, BRAND = null;
+const history = [];
+
+const $ = (id) => document.getElementById(id);
+
+// ── Login (simula el de la página de la empresa) ─────────────────────────────
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginBtn").disabled = true;
+  $("loginBtn").textContent = "Ingresando…";
+  $("loginErr").innerHTML = "";
+  try {
+    const r = await fetch("/demo/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("email").value, password: $("pass").value }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "No se pudo ingresar");
+    TOKEN = d.token; BRAND = d.brandId;
+    $("login").style.display = "none";
+    $("app").style.display = "flex";
+    $("q").focus();
+    const cfg = await (await fetch("/config")).json();
+    $("mode").textContent = cfg.agentMode === "real" ? cfg.model : "modo stub (sin API key)";
+  } catch (err) {
+    $("loginErr").innerHTML = '<div class="err">' + err.message + "</div>";
+    $("loginBtn").disabled = false;
+    $("loginBtn").textContent = "Ingresar";
+  }
+});
+
+// ── Chat ─────────────────────────────────────────────────────────────────────
+document.addEventListener("click", (e) => {
+  if (e.target.classList.contains("sug")) {
+    $("q").value = e.target.textContent;
+    $("send").requestSubmit();
+  }
+});
+
+function addMsg(cls, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.textContent = text;
+  $("log").appendChild(d);
+  $("log").scrollTop = $("log").scrollHeight;
+  return d;
+}
+
+$("send").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("q").value.trim();
+  if (!q) return;
+  if ($("empty")) $("empty").remove();
+
+  $("q").value = "";
+  $("sendBtn").disabled = true;
+  addMsg("user", q);
+  history.push({ role: "user", content: q });
+
+  const toolBox = document.createElement("div");
+  toolBox.className = "tools";
+  $("log").appendChild(toolBox);
+  const chips = {};
+
+  let bot = null, acc = "";
+
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
+      body: JSON.stringify({ brandId: BRAND, messages: history }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || "Error del servidor");
+
+    // SSE por POST: se lee el body a mano (EventSource solo soporta GET).
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+
+      for (const p of parts) {
+        if (!p.startsWith("data: ")) continue;
+        const ev = JSON.parse(p.slice(6));
+
+        if (ev.type === "text") {
+          if (!bot) bot = addMsg("bot", "");
+          acc += ev.text;
+          bot.textContent = acc;
+          $("log").scrollTop = $("log").scrollHeight;
+        } else if (ev.type === "tool_start") {
+          const c = document.createElement("div");
+          c.className = "tool";
+          c.innerHTML = '<span class="spin"></span>' + ev.name;
+          chips[ev.name] = c;
+          toolBox.appendChild(c);
+          $("log").scrollTop = $("log").scrollHeight;
+        } else if (ev.type === "tool_end") {
+          if (chips[ev.name]) chips[ev.name].className = "tool " + (ev.ok ? "ok" : "fail");
+        } else if (ev.type === "error") {
+          addMsg("bot", "⚠ " + ev.message);
+        }
+      }
+    }
+
+    if (acc) history.push({ role: "assistant", content: acc });
+  } catch (err) {
+    addMsg("bot", "⚠ " + err.message);
+  } finally {
+    if (!toolBox.children.length) toolBox.remove();
+    $("sendBtn").disabled = false;
+    $("q").focus();
+  }
+});
+</script>
+</body>
+</html>
