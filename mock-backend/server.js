@@ -4,6 +4,17 @@ const PORT = 4000;
 
 app.use(express.json());
 
+// CORS: la página de la empresa corre en otro puerto y llama a este backend
+// desde el navegador para hacer el login, igual que en producción. En un
+// backend real esto sería una lista blanca de dominios, no '*'.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // Datos de prueba (ver fixtures.js — reflejan diagrama-relaciones-db.pdf)
 // ---------------------------------------------------------------------------

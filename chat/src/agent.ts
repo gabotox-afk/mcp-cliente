@@ -31,22 +31,75 @@ Reglas:
 // Agente real: loop de tool use contra la API de Claude.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Devuelve una copia de los mensajes con un punto de cache en el último bloque.
+// Va sobre una copia y no sobre el array original: si el marcador quedara
+// pegado en el historial, la vuelta siguiente mandaría dos marcadores en
+// posiciones distintas y el prefijo cambiaría en cada iteración — justo lo que
+// rompe el cache.
+function withHistoryBreakpoint(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+
+  const out = [...messages];
+  const last = out[out.length - 1]!;
+  const blocks = Array.isArray(last.content) ? [...last.content] : null;
+  if (!blocks || blocks.length === 0) return out;
+
+  const lastBlock = blocks[blocks.length - 1]!;
+  blocks[blocks.length - 1] = {
+    ...lastBlock,
+    cache_control: { type: "ephemeral" },
+  } as typeof lastBlock;
+
+  out[out.length - 1] = { ...last, content: blocks };
+  return out;
+}
+
+// Suma el uso de tokens de todas las vueltas del loop, para poder ver si el
+// cache está funcionando. Si `cacheRead` queda en cero entre requests con el
+// mismo prefijo, hay algo que lo está invalidando.
+type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+function logUsage(u: Usage) {
+  const total = u.input + u.cacheRead + u.cacheWrite;
+  const pct = total > 0 ? Math.round((u.cacheRead / total) * 100) : 0;
+  process.stderr.write(
+    `[chat] tokens — entrada:${u.input} cache_leido:${u.cacheRead} ` +
+      `cache_escrito:${u.cacheWrite} salida:${u.output} (${pct}% del prompt vino del cache)\n`,
+  );
+}
+
 async function runReal(session: McpSession, history: ChatMessage[], emit: Emit): Promise<void> {
   const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
   // El catálogo de tools sale del MCP, no está hardcodeado.
   const tools = await listTools(session);
 
+  // Contenido siempre como array de bloques (nunca string suelto): el cache es
+  // coincidencia exacta de bytes, así que la forma tiene que ser idéntica en
+  // todas las requests o el prefijo deja de matchear.
   const messages: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.role,
-    content: m.content,
+    content: [{ type: "text" as const, text: m.content }],
   }));
+
+  const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const stream = anthropic.messages.stream({
       model: MODEL,
       max_tokens: 8000,
-      system: SYSTEM_PROMPT,
+      // Punto de cache 1 — el grande. El orden de armado es tools → system →
+      // messages, así que marcar el final del system deja cacheados el catálogo
+      // de tools (~12k tokens) y el prompt juntos. Ese bloque es idéntico para
+      // todos los usuarios y todas las conversaciones: lo escribe el primero que
+      // pregunta y lo leen todos los demás a ~10% del precio.
+      //
+      // Por eso el system prompt tiene que ser una constante: si se le mete la
+      // fecha, el nombre del usuario o cualquier cosa variable, cada request
+      // pasa a tener su propio prefijo y el cache deja de servir.
+      system: [
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      ],
       // NO desactivar el thinking en Opus 5 / Sonnet 5: con thinking apagado el
       // modelo a veces escribe la llamada a la tool como texto en vez de emitir
       // el bloque estructurado, y la llamada nunca se ejecuta — sin error, sin
@@ -56,7 +109,11 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
         ? { output_config: { effort: EFFORT as "low" | "medium" | "high" } }
         : {}),
       tools,
-      messages,
+      // Punto de cache 2 — el historial. Cada vuelta del loop reenvía todo lo
+      // anterior (incluidos los resultados de tools, que pueden ser grandes),
+      // así que marcar el final del último mensaje hace que la vuelta siguiente
+      // lea en vez de reprocesar.
+      messages: withHistoryBreakpoint(messages),
     });
 
     // Los tokens de texto se van al front a medida que llegan.
@@ -67,9 +124,18 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
     }
 
     const message = await stream.finalMessage();
+
+    usage.input      += message.usage.input_tokens;
+    usage.output     += message.usage.output_tokens;
+    usage.cacheRead  += message.usage.cache_read_input_tokens ?? 0;
+    usage.cacheWrite += message.usage.cache_creation_input_tokens ?? 0;
+
     messages.push({ role: "assistant", content: message.content });
 
-    if (message.stop_reason !== "tool_use") return;
+    if (message.stop_reason !== "tool_use") {
+      logUsage(usage);
+      return;
+    }
 
     const toolUses = message.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -96,6 +162,7 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
     messages.push({ role: "user", content: results });
   }
 
+  logUsage(usage);
   emit({
     type: "text",
     text: "\n\n(Corté acá: la consulta necesitó demasiadas vueltas de herramientas.)",

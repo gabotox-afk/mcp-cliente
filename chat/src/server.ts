@@ -36,29 +36,20 @@ Bun.serve({
 
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
-    // ── Config pública, para que el front sepa en qué modo está ──────────────
+    // ── Config pública ───────────────────────────────────────────────────────
+    // El bloque `demo` le dice a la página de prueba dónde está el backend de
+    // la empresa, para que haga el login contra él directamente. En producción
+    // la página ya conoce su propio backend y este bloque no existe.
+    //
+    // Este backend NO tiene endpoint de login a propósito: nunca debe recibir
+    // contraseñas, solo tokens ya emitidos. Ver el README.
     if (url.pathname === "/config") {
-      return json({ agentMode: AGENT_MODE, model: MODEL, mcp: MCP_BASE_URL });
-    }
-
-    // ── Login DEMO ───────────────────────────────────────────────────────────
-    // Simula lo que en producción hace la página de la empresa: el usuario ya
-    // llegó logueado y el host nos pasa su JWT. Este endpoint existe solo para
-    // poder probar sin tener el producto real alrededor.
-    if (url.pathname === "/demo/login" && req.method === "POST") {
-      const { email, password } = (await req.json()) as { email: string; password: string };
-
-      const res = await fetch(`${DEMO_BACKEND_URL}/users/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, brandId: DEMO_BRAND_ID }),
+      return json({
+        agentMode: AGENT_MODE,
+        model: MODEL,
+        mcp: MCP_BASE_URL,
+        demo: { backendUrl: DEMO_BACKEND_URL, brandId: DEMO_BRAND_ID },
       });
-      const data = (await res.json()) as { success: boolean; token?: string; message?: string };
-
-      if (!data.success || !data.token) {
-        return json({ error: data.message ?? "Credenciales inválidas." }, 401);
-      }
-      return json({ token: data.token, brandId: DEMO_BRAND_ID });
     }
 
     // ── Chat ─────────────────────────────────────────────────────────────────

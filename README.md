@@ -34,25 +34,37 @@ Tres decisiones que definen el diseño:
 | Carpeta | Qué es |
 |---|---|
 | `chat/` | Backend del chat (Bun) + página demo. Es lo único que se hospeda. |
+| `mcp-diagnostica/` | El servidor MCP. Copia del repo de Diagnostica, incluida acá para poder levantar el circuito completo de una. |
 | `mock-backend/` | Backend falso con datos de prueba, para desarrollar sin tocar datos reales. |
+
+Las tres carpetas son independientes: cada una tiene su `package.json` y sus
+dependencias. Están juntas por conveniencia de desarrollo, no porque se
+necesiten entre sí a nivel de código — el único contrato entre `chat/` y
+`mcp-diagnostica/` es el protocolo MCP sobre HTTP.
+
+> `mcp-diagnostica/` es un espejo, no la fuente de verdad. El repo original es
+> `Llaudet/mcp-diagnostica`; los cambios al MCP van allá.
 
 ## Cómo levantarlo
 
-Hacen falta tres procesos. El MCP server no está en este repo — se levanta aparte.
+Tres procesos, tres terminales:
 
 ```bash
 # 1. Backend de prueba (puerto 4000)
 cd mock-backend && npm install && node server.js
 
-# 2. Servidor MCP (puerto 3001) — desde su propio repo,
-#    apuntando BACKEND_URL a http://localhost:4000
+# 2. Servidor MCP (puerto 3001), apuntando al backend de prueba
+cd mcp-diagnostica && bun install && BACKEND_URL=http://localhost:4000 bun src/http.ts
 
 # 3. Chat (puerto 3002)
 cd chat && bun install && bun src/server.ts
 ```
 
-Después, `http://localhost:3002`. La página demo simula el login de la empresa
-(`admin@diagnostica.com` / `1234`) y abre el chat con ese token.
+Después, `http://localhost:3002`. La página demo simula el login de la empresa:
+pide las credenciales contra el backend directamente y abre el chat con el token
+que recibe. El chat-backend nunca ve la contraseña — solo recibe el token ya
+emitido, igual que pasaría embebido en el producto real. Usuarios de prueba en
+el mock: `admin@diagnostica.com` / `1234`.
 
 ## Configuración
 
@@ -82,8 +94,15 @@ Probados los tres con las mismas preguntas, todos aciertan:
 | Opus 5 | ~US$0.150 | ~4-7s |
 
 El costo lo domina el catálogo de herramientas que viaja en cada request
-(~25-30k tokens de entrada), no la conversación. Prompt caching es la
-optimización obvia si esto escala.
+(~12k tokens solo de definiciones), no la conversación. Por eso hay **prompt
+caching**: el catálogo y el system prompt se marcan como cacheables, y el
+historial lleva un breakpoint al final. Medido sobre una conversación de tres
+mensajes, el 98% del prompt se lee del cache — una lectura cuesta ~0.1× lo que
+cuesta el token normal.
+
+Que funcione depende de que el prefijo sea byte a byte idéntico entre requests,
+así que los mensajes siempre se arman como arrays de bloques (nunca strings
+sueltos) y el orden es fijo: `tools` → `system` → `messages`.
 
 No conviene desactivar el thinking: sin él, el modelo a veces escribe la llamada
 a la herramienta como texto plano en vez de emitir el bloque estructurado, y la

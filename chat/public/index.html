@@ -26,6 +26,7 @@
   button:disabled { background: var(--muted); cursor: not-allowed; }
   .err { margin-top: 1rem; padding: .7rem .85rem; border-radius: 8px; background: #fee2e2; color: #991b1b; font-size: .9rem; }
   .hint { margin-top: 1.5rem; font-size: .8rem; color: var(--muted); line-height: 1.6; }
+  .hint code { background: #f1f5f9; color: #475569; padding: .05rem .3rem; border-radius: 4px; font-size: .95em; }
 
   /* ── Chat ────────────────────────────────────────────────────────────── */
   #app { display: none; height: 100vh; flex-direction: column; max-width: 780px; margin: 0 auto; }
@@ -67,15 +68,19 @@
     <div class="sub">Ingresá para acceder al panel</div>
     <form id="loginForm">
       <label for="email">Email</label>
-      <input id="email" type="email" required value="admin@diagnostica.com" autocomplete="email">
+      <input id="email" type="email" required placeholder="usuario@empresa.com" autocomplete="email">
       <label for="pass">Contraseña</label>
-      <input id="pass" type="password" required value="1234" autocomplete="current-password">
+      <input id="pass" type="password" required placeholder="••••••••" autocomplete="current-password">
       <button type="submit" id="loginBtn">Ingresar</button>
     </form>
     <div id="loginErr"></div>
     <div class="hint">
-      Demo: este login simula el de la página de la empresa. El chat no pide
+      Este login simula el de la página de la empresa. El chat no pide
       credenciales propias — reutiliza el token de esta sesión.
+      <br><br>
+      Usuarios del backend de prueba: <code>admin@diagnostica.com</code>,
+      <code>medico@diagnostica.com</code> o <code>admin2@diagnostica.com</code>,
+      todos con contraseña <code>1234</code>.
     </div>
   </div>
 </div>
@@ -101,33 +106,52 @@
 </div>
 
 <script>
-let TOKEN = null, BRAND = null;
+let TOKEN = null, BRAND = null, CFG = null;
 const history = [];
 
 const $ = (id) => document.getElementById(id);
 
-// ── Login (simula el de la página de la empresa) ─────────────────────────────
+// La config se carga al abrir la página: hace falta saber dónde está el backend
+// de la empresa antes de poder loguearse contra él.
+const ready = fetch("/config").then(r => r.json()).then(c => { CFG = c; });
+
+// ── Login ────────────────────────────────────────────────────────────────────
+// Esto es lo que hace la página de la empresa: llamar a SU PROPIO backend.
+// El chat-backend no participa y nunca ve la contraseña — solo recibe después
+// el token ya emitido. Por eso no existe ningún /login en el chat.
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("loginBtn").disabled = true;
   $("loginBtn").textContent = "Ingresando…";
   $("loginErr").innerHTML = "";
   try {
-    const r = await fetch("/demo/login", {
+    await ready;
+
+    const r = await fetch(CFG.demo.backendUrl + "/users/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: $("email").value, password: $("pass").value }),
+      body: JSON.stringify({
+        email: $("email").value,
+        password: $("pass").value,
+        brandId: CFG.demo.brandId,
+      }),
     });
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error || "No se pudo ingresar");
-    TOKEN = d.token; BRAND = d.brandId;
+    // El backend responde 200 con success:false cuando las credenciales fallan.
+    if (!d.success || !d.token) throw new Error(d.message || "Credenciales inválidas.");
+
+    TOKEN = d.token;
+    BRAND = CFG.demo.brandId;
+
     $("login").style.display = "none";
     $("app").style.display = "flex";
     $("q").focus();
-    const cfg = await (await fetch("/config")).json();
-    $("mode").textContent = cfg.agentMode === "real" ? cfg.model : "modo stub (sin API key)";
+    $("mode").textContent = CFG.agentMode === "real" ? CFG.model : "modo stub (sin API key)";
   } catch (err) {
-    $("loginErr").innerHTML = '<div class="err">' + err.message + "</div>";
+    const msg = err instanceof TypeError
+      ? "No se pudo contactar al backend de la empresa. ¿Está levantado?"
+      : err.message;
+    $("loginErr").innerHTML = '<div class="err">' + msg + "</div>";
     $("loginBtn").disabled = false;
     $("loginBtn").textContent = "Ingresar";
   }

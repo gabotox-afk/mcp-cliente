@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "mcp-diagnostica": {
+      "command": "bun",
+      "args": [
+        "/home/llaudet/diagnostica/mcp-diagnostica/src/index.ts"
+      ],
+      "env": {
+        "BACKEND_URL": "https://facu-back.diagnostica.com.ar",
+        "BACKEND_TOKEN": ""
+      }
+    },
+    "mcp-diagnostica-http": {
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
