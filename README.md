@@ -131,6 +131,27 @@ Dibuja con Chart.js, servido desde `node_modules` en `/vendor/chart.umd.js` y no
 desde un CDN: el chat va embebido en el producto de una empresa, que puede estar
 detrás de un firewall sin salida a internet.
 
+## Gráficos pedidos en la conversación
+
+*"Hacéme un gráfico de torta del tipo de consultas"* y el gráfico aparece en el
+hilo. Lo resuelve la tool `generate_chart`.
+
+**El modelo elige qué graficar, no los números.** Llama
+`generate_chart(source: "list_videovisits", group_by: "specialty", type: "doughnut")`
+y el backend consulta y agrupa — el mismo motor que usan los predeterminados.
+La alternativa habría sido que el modelo pasara `labels` y `values` sacados de
+su contexto, y ahí un número mal transcripto produce un gráfico que se ve
+perfecto y es falso. Eso no se detecta mirándolo.
+
+`generate_chart` es una **tool local**: la resuelve este backend, no el MCP.
+Dibujar es asunto del cliente; el MCP de la empresa ni siquiera sabe que existe
+un chat. El loop de tools despacha por nombre — las locales acá, el resto al
+MCP.
+
+El modelo no tiene una lista de qué campos se pueden agrupar. Si pide uno que no
+existe, el error le devuelve los campos que sí están en las filas y se corrige
+solo, sin que haya que mantener a mano un catálogo por entidad.
+
 ### La limitación importante
 
 **El MCP no tiene `group_by`.** `count_sessions` acepta filtros y devuelve un

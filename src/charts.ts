@@ -63,6 +63,55 @@ export function chartCatalog(): Array<Pick<Spec, "id" | "title" | "type">> {
   return CATALOG.map(({ id, title, type }) => ({ id, title, type }));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Gráficos pedidos por el modelo durante la conversación.
+//
+// El modelo elige QUÉ graficar; los números los sigue trayendo el backend desde
+// el MCP. Nunca pasa por su contexto un valor que después tenga que transcribir
+// a la llamada — un número mal copiado produce un gráfico que se ve perfecto y
+// es falso, y eso no hay forma de detectarlo mirándolo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ChartRequest = {
+  source: string;
+  group_by: string;
+  type?: ChartType;
+  title?: string;
+  from?: string;
+  to?: string;
+};
+
+export async function generateChart(
+  session: McpSession,
+  req: ChartRequest,
+): Promise<ChartData> {
+  if (!req?.source || !req?.group_by) {
+    throw new Error("Faltan 'source' y/o 'group_by'.");
+  }
+  // Solo tools de listado: son las únicas que devuelven filas para agrupar.
+  // Las count_* devuelven un escalar y no sirven acá.
+  if (!req.source.startsWith("list_")) {
+    throw new Error(
+      `'source' tiene que ser una herramienta de listado (list_*), y "${req.source}" no lo es.`,
+    );
+  }
+
+  const byDay = /date|fecha|_at$/i.test(req.group_by);
+
+  return build(
+    session,
+    {
+      id: `adhoc:${req.source}:${req.group_by}`,
+      title: req.title?.trim() || `${req.source.replace(/^list_/, "")} por ${req.group_by}`,
+      type: req.type ?? (byDay ? "line" : "bar"),
+      tool: req.source,
+      field: req.group_by,
+      ...(byDay ? { bucket: "day" as const } : {}),
+    },
+    { from: req.from, to: req.to },
+  );
+}
+
 function dayOf(value: unknown): string | null {
   const d = new Date(String(value));
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
@@ -75,7 +124,17 @@ export async function buildChart(
 ): Promise<ChartData> {
   const spec = CATALOG.find((c) => c.id === id);
   if (!spec) throw new Error(`No existe el gráfico "${id}".`);
+  return build(session, spec, range);
+}
 
+// Motor único. Los gráficos predeterminados y los que pide el modelo pasan por
+// acá: la diferencia entre unos y otros es solamente de dónde salen los
+// parámetros, no cómo se construye el gráfico.
+async function build(
+  session: McpSession,
+  spec: Spec,
+  range: { from?: string; to?: string } = {},
+): Promise<ChartData> {
   const res = await callTool(session, spec.tool, {
     limit: ROW_LIMIT,
     ...(range.from ? { from: range.from } : {}),
@@ -120,9 +179,15 @@ export async function buildChart(
   // Que ninguna fila tenga el campo no es "no hay datos": es que el backend
   // cambió de forma y este gráfico quedó viejo. Callarlo devolvería un gráfico
   // vacío, que se lee como "no pasó nada" y es mentira.
+  //
+  // El error nombra los campos que sí están. Eso es lo que le permite al modelo
+  // corregirse solo cuando pide agrupar por un campo que no existe, sin que
+  // tengamos que mantener a mano un catálogo de campos por entidad.
   if (rows.length > 0 && tally.size === 0) {
+    const sample = rows[0] as Record<string, unknown>;
     throw new Error(
-      `Ninguna de las ${rows.length} filas de ${spec.tool} tiene el campo "${spec.field}".`,
+      `Ninguna de las ${rows.length} filas de ${spec.tool} tiene el campo "${spec.field}". ` +
+        `Los campos disponibles son: ${Object.keys(sample ?? {}).join(", ")}.`,
     );
   }
 

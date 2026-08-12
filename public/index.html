@@ -296,7 +296,10 @@ $("send").addEventListener("submit", async (e) => {
   $("log").appendChild(toolBox);
   const chips = {};
 
-  let bot = null, acc = "";
+  // `acc` es el texto de la burbuja actual; `full` es todo lo que dijo el
+  // modelo en este turno. Se separan porque un gráfico corta la burbuja al
+  // medio, y el historial tiene que quedarse con la respuesta entera.
+  let bot = null, acc = "", full = "";
 
   try {
     const res = await fetch("/chat", {
@@ -325,6 +328,7 @@ $("send").addEventListener("submit", async (e) => {
         if (ev.type === "text") {
           if (!bot) bot = addMsg("bot", "");
           acc += ev.text;
+          full += ev.text;
           bot.textContent = acc;
           $("log").scrollTop = $("log").scrollHeight;
         } else if (ev.type === "tool_start") {
@@ -336,13 +340,20 @@ $("send").addEventListener("submit", async (e) => {
           $("log").scrollTop = $("log").scrollHeight;
         } else if (ev.type === "tool_end") {
           if (chips[ev.name]) chips[ev.name].className = "tool " + (ev.ok ? "ok" : "fail");
+        } else if (ev.type === "chart") {
+          // El gráfico llega ya armado desde el backend. El modelo eligió qué
+          // graficar, pero los números no pasaron por él.
+          drawChart(ev.chart);
+          // El texto que venga después va en una burbuja nueva, debajo del
+          // gráfico, y no pegado al que había antes.
+          bot = null; acc = "";
         } else if (ev.type === "error") {
           addMsg("bot", "⚠ " + ev.message);
         }
       }
     }
 
-    if (acc) history.push({ role: "assistant", content: acc });
+    if (full) history.push({ role: "assistant", content: full });
   } catch (err) {
     addMsg("bot", "⚠ " + err.message);
   } finally {

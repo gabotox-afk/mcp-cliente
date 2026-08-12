@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { listTools, callTool, type McpSession } from "./mcp-client.ts";
+import { listTools, callTool, type AnthropicTool, type McpSession } from "./mcp-client.ts";
+import { generateChart, type ChartData } from "./charts.ts";
 import { ANTHROPIC_API_KEY, MODEL, EFFORT, SUPPORTS_EFFORT, AGENT_MODE, MAX_TOOL_ITERATIONS } from "./config.ts";
 
 // Eventos que el agente le va emitiendo al front. El server los serializa a SSE.
@@ -7,6 +8,7 @@ export type ChatEvent =
   | { type: "text";       text: string }
   | { type: "tool_start"; name: string; input: Record<string, unknown> }
   | { type: "tool_end";   name: string; ok: boolean }
+  | { type: "chart";      chart: ChartData }
   | { type: "done" }
   | { type: "error";      message: string };
 
@@ -26,6 +28,87 @@ Reglas:
 - Los datos de pacientes vienen anonimizados a propósito: no tienen nombre. No inventes nombres ni intentes identificar personas.
 - Respondé en castellano rioplatense, de forma concisa y directa. Dar el número o el hallazgo primero, el detalle después.
 - Si una pregunta necesita varias consultas, hacelas y después resumí.`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tools locales: las resuelve este backend, no el MCP.
+//
+// Dibujar es asunto del cliente, no del dato. El MCP expone números; qué se
+// hace con ellos lo decide quien los consume. Por eso `generate_chart` vive
+// acá y no en el MCP de la empresa — que además ni siquiera sabe que existe un
+// chat. Es el mismo razonamiento por el que en su momento se sacaron del MCP
+// las tools de generar PDF e imágenes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LOCAL_TOOLS: AnthropicTool[] = [
+  {
+    name: "generate_chart",
+    description:
+      "Dibuja un gráfico en la conversación a partir de los datos de una herramienta de listado. " +
+      "Usala cuando el usuario pida ver algo graficado, visualizado, en torta, en barras o como evolución. " +
+      "No le pases números: vos elegís QUÉ graficar (qué entidad y por qué campo agrupar) y el gráfico se " +
+      "construye consultando los datos directamente. Después de llamarla, comentá brevemente el hallazgo; " +
+      "no hace falta que repitas todos los valores porque el usuario ya ve el gráfico.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: {
+          type: "string",
+          description:
+            "Herramienta de listado de la que salen los datos, por ejemplo 'list_videovisits' o 'list_sessions'. " +
+            "Tiene que empezar con list_ — las count_ devuelven un número y no sirven para agrupar.",
+        },
+        group_by: {
+          type: "string",
+          description:
+            "Campo de cada fila por el que agrupar, por ejemplo 'specialty', 'status', 'type' o 'date'. " +
+            "Si no existe, el error te va a decir qué campos hay disponibles.",
+        },
+        type: {
+          type: "string",
+          enum: ["bar", "doughnut", "line"],
+          description: "Tipo de gráfico. 'doughnut' para torta, 'line' para evolución en el tiempo.",
+        },
+        title: { type: "string", description: "Título del gráfico, en castellano." },
+        from: { type: "string", description: "Fecha de inicio ISO (opcional)." },
+        to:   { type: "string", description: "Fecha de fin ISO (opcional)." },
+      },
+      required: ["source", "group_by"],
+    },
+  },
+];
+
+const LOCAL_TOOL_NAMES = new Set(LOCAL_TOOLS.map((t) => t.name));
+
+// Ejecuta una tool local. Devuelve el texto que ve el modelo; el gráfico en sí
+// viaja al front por separado, vía `emit`.
+async function callLocalTool(
+  session: McpSession,
+  name: string,
+  input: Record<string, unknown>,
+  emit: Emit,
+): Promise<{ text: string; isError: boolean }> {
+  if (name !== "generate_chart") {
+    return { text: `Tool local desconocida: ${name}`, isError: true };
+  }
+  try {
+    const chart = await generateChart(session, input as Parameters<typeof generateChart>[1]);
+    emit({ type: "chart", chart });
+
+    // Al modelo le devolvemos los valores agrupados igual. No es para que los
+    // transcriba —el gráfico ya salió— sino para que pueda comentar el
+    // resultado sin tener que hacer otra consulta.
+    const resumen = chart.labels.map((l, i) => `${l}: ${chart.values[i]}`).join(", ");
+    return {
+      text:
+        `Gráfico "${chart.title}" mostrado al usuario (${chart.type}). ` +
+        `Datos: ${resumen}.` +
+        (chart.truncated ? ` OJO: es una muestra de ${chart.counted} sobre ${chart.total} registros.` : ""),
+      isError: false,
+    };
+  } catch (err) {
+    return { text: err instanceof Error ? err.message : String(err), isError: true };
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agente real: loop de tool use contra la API de Claude.
@@ -71,8 +154,10 @@ function logUsage(u: Usage) {
 async function runReal(session: McpSession, history: ChatMessage[], emit: Emit): Promise<void> {
   const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-  // El catálogo de tools sale del MCP, no está hardcodeado.
-  const tools = await listTools(session);
+  // El catálogo de tools sale del MCP, no está hardcodeado. A eso se le suman
+  // las locales, que resuelve este backend. El orden es fijo (MCP primero,
+  // locales después) porque el cache es coincidencia exacta de bytes.
+  const tools = [...(await listTools(session)), ...LOCAL_TOOLS];
 
   // Contenido siempre como array de bloques (nunca string suelto): el cache es
   // coincidencia exacta de bytes, así que la forma tiene que ser idéntica en
@@ -148,7 +233,9 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
       toolUses.map(async (tu) => {
         const input = (tu.input ?? {}) as Record<string, unknown>;
         emit({ type: "tool_start", name: tu.name, input });
-        const r = await callTool(session, tu.name, input);
+        const r = LOCAL_TOOL_NAMES.has(tu.name)
+          ? await callLocalTool(session, tu.name, input, emit)
+          : await callTool(session, tu.name, input);
         emit({ type: "tool_end", name: tu.name, ok: !r.isError });
         return {
           type: "tool_result" as const,
