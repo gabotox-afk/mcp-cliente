@@ -116,6 +116,39 @@ Sin API key el chat arranca en modo *stub*: no interpreta lenguaje natural, pero
 el circuito completo (front → back → MCP) funciona igual. Sirve para verificar
 la infraestructura sin gastar tokens.
 
+## Gráficos predeterminados
+
+Una barra de botones sobre el chat: se elige uno y aparece el gráfico. **No
+pasan por el modelo** — el backend consulta el MCP y agrupa. Son deterministas,
+instantáneos y no gastan tokens. Un gráfico que sale de un menú fijo no tiene
+por qué costar plata ni depender de que el modelo transcriba bien los números.
+
+El catálogo vive en `src/charts.ts` y se expone en `GET /charts`; ejecutar uno
+es `POST /charts/:id` con el token del usuario, así que respeta los mismos
+permisos que el chat.
+
+Dibuja con Chart.js, servido desde `node_modules` en `/vendor/chart.umd.js` y no
+desde un CDN: el chat va embebido en el producto de una empresa, que puede estar
+detrás de un firewall sin salida a internet.
+
+### La limitación importante
+
+**El MCP no tiene `group_by`.** `count_sessions` acepta filtros y devuelve un
+número; no hay forma de pedirle "sesiones por estado". Así que cada gráfico trae
+las filas con `list_*` y agrupa acá.
+
+Eso funciona para volúmenes acotados y no escala. Cada gráfico compara las filas
+que trajo contra el `total` que reporta el backend, y si se quedó corto lo dice
+en pantalla: *"Muestra de 1000 sobre N registros"*. Un gráfico parcial
+presentado como total es el tipo de error que nadie detecta mirándolo.
+
+La solución de fondo es un `group_by` en el backend — pendiente de hablar con
+Facu.
+
+`src/charts.ts` es la única parte del chat que sabe algo concreto del dominio
+(que las sesiones tienen `status`, que los exámenes tienen `exam_type`). Contra
+otro MCP, ese catálogo hay que rehacerlo; el resto del chat sigue sirviendo.
+
 ### Sobre el modelo
 
 Probados los tres con las mismas preguntas, todos aciertan:

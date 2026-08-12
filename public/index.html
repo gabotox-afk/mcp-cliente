@@ -58,6 +58,19 @@
   form#send { display: flex; gap: .6rem; padding: 1rem 1.25rem; border-top: 1px solid var(--line); background: #fff; }
   form#send input { flex: 1; }
   form#send button { width: auto; margin: 0; padding: .75rem 1.5rem; }
+
+  /* ── Gráficos predeterminados ────────────────────────────────────────── */
+  #bar { display: flex; gap: .4rem; padding: .7rem 1.25rem; border-bottom: 1px solid var(--line); background: #fff; overflow-x: auto; }
+  #bar button { width: auto; margin: 0; padding: .4rem .85rem; font-size: .82rem; font-weight: 500;
+                background: #fff; color: #475569; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap; }
+  #bar button:hover:not(:disabled) { border-color: #47517a; background: #f8fafc; }
+  #bar button:disabled { opacity: .5; cursor: wait; background: #fff; }
+
+  .chart { align-self: stretch; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
+  .chart h3 { font-size: .95rem; font-weight: 600; margin-bottom: .15rem; }
+  .chart .meta { font-size: .75rem; color: var(--muted); margin-bottom: .8rem; }
+  .chart .warn { color: #92400e; background: #fef3c7; border-radius: 6px; padding: .35rem .6rem; display: inline-block; }
+  .chart .box { position: relative; height: 260px; }
 </style>
 </head>
 <body>
@@ -91,6 +104,7 @@
     <span class="title">Asistente de datos</span>
     <span class="mode" id="mode"></span>
   </header>
+  <div id="bar"></div>
   <div id="log">
     <div class="empty" id="empty">
       <b>Preguntá sobre tus datos</b>
@@ -105,6 +119,7 @@
   </form>
 </div>
 
+<script src="/vendor/chart.umd.js"></script>
 <script>
 let TOKEN = null, BRAND = null, CFG = null;
 const history = [];
@@ -147,6 +162,7 @@ $("loginForm").addEventListener("submit", async (e) => {
     $("app").style.display = "flex";
     $("q").focus();
     $("mode").textContent = CFG.agentMode === "real" ? CFG.model : "modo stub (sin API key)";
+    loadCharts();
   } catch (err) {
     const msg = err instanceof TypeError
       ? "No se pudo contactar al backend de la empresa. ¿Está levantado?"
@@ -156,6 +172,96 @@ $("loginForm").addEventListener("submit", async (e) => {
     $("loginBtn").textContent = "Ingresar";
   }
 });
+
+// ── Gráficos predeterminados ─────────────────────────────────────────────────
+// Estos NO pasan por el modelo: el backend consulta el MCP y agrupa. Por eso
+// son instantáneos, siempre dan lo mismo y no gastan tokens.
+
+const PALETTE = ["#313a5c", "#7c86b8", "#a3adcf", "#4f5b8c", "#c7cde3", "#606d9e", "#8e98c4"];
+
+async function loadCharts() {
+  const r = await fetch("/charts");
+  const { charts } = await r.json();
+  for (const c of charts) {
+    const b = document.createElement("button");
+    b.textContent = c.title;
+    b.onclick = () => runChart(c, b);
+    $("bar").appendChild(b);
+  }
+}
+
+async function runChart(spec, btn) {
+  if ($("empty")) $("empty").remove();
+  btn.disabled = true;
+  try {
+    const r = await fetch("/charts/" + encodeURIComponent(spec.id), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
+      body: JSON.stringify({ brandId: BRAND }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    drawChart(d);
+  } catch (err) {
+    addMsg("bot", "No se pudo generar «" + spec.title + "»: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function drawChart(d) {
+  const card = document.createElement("div");
+  card.className = "chart";
+
+  const h = document.createElement("h3");
+  h.textContent = d.title;
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  // Si el backend tiene más filas de las que trajimos, el gráfico es una
+  // muestra. Decirlo importa: un gráfico parcial presentado como total es
+  // exactamente el tipo de error que nadie detecta mirándolo.
+  if (d.truncated) {
+    const w = document.createElement("span");
+    w.className = "warn";
+    w.textContent = "Muestra de " + d.counted + " sobre " + d.total + " registros";
+    meta.appendChild(w);
+  } else {
+    meta.textContent = d.counted + " registros";
+  }
+
+  const box = document.createElement("div");
+  box.className = "box";
+  const canvas = document.createElement("canvas");
+  box.appendChild(canvas);
+
+  card.append(h, meta, box);
+  $("log").appendChild(card);
+
+  new Chart(canvas, {
+    type: d.type,
+    data: {
+      labels: d.labels,
+      datasets: [{
+        label: d.title,
+        data: d.values,
+        backgroundColor: d.type === "line" ? "rgba(49,58,92,.1)" : d.labels.map((_, i) => PALETTE[i % PALETTE.length]),
+        borderColor: "#313a5c",
+        borderWidth: d.type === "line" ? 2 : 0,
+        fill: d.type === "line",
+        tension: .3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: d.type === "doughnut", position: "right" } },
+      scales: d.type === "doughnut" ? {} : { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+
+  $("log").scrollTop = $("log").scrollHeight;
+}
 
 // ── Chat ─────────────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {

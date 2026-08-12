@@ -1,5 +1,6 @@
 import { join } from "path";
 import { runAgent, type ChatEvent, type ChatMessage } from "./agent.ts";
+import { buildChart, chartCatalog } from "./charts.ts";
 import { PORT, MCP_BASE_URL, DEMO_BACKEND_URL, DEMO_BRAND_ID, AGENT_MODE, MODEL } from "./config.ts";
 
 // Backend del chat. Es la única pieza que hospedamos nosotros y la única que
@@ -50,6 +51,51 @@ Bun.serve({
         mcp: MCP_BASE_URL,
         demo: { backendUrl: DEMO_BACKEND_URL, brandId: DEMO_BRAND_ID },
       });
+    }
+
+    // Chart.js servido desde node_modules, no desde un CDN. El chat va embebido
+    // en el producto de una empresa, que puede estar detrás de un firewall sin
+    // salida a internet; y una dependencia de dibujo no debería ser un pedido a
+    // un tercero en cada carga. Se maneja por package.json como cualquier otra.
+    if (url.pathname === "/vendor/chart.umd.js") {
+      const file = Bun.file(join(import.meta.dir, "..", "node_modules", "chart.js", "dist", "chart.umd.js"));
+      if (!(await file.exists())) return new Response("Falta chart.js — corré bun install", { status: 500 });
+      return new Response(file, {
+        headers: { "Content-Type": "text/javascript", "Cache-Control": "public, max-age=86400" },
+      });
+    }
+
+    // ── Gráficos predeterminados ─────────────────────────────────────────────
+    // El catálogo es público (son solo títulos, no hay datos), pero ejecutar
+    // uno pide el token del usuario igual que el chat: el gráfico sale de las
+    // mismas tools del MCP y respeta los mismos permisos.
+    if (url.pathname === "/charts" && req.method === "GET") {
+      return json({ charts: chartCatalog() });
+    }
+
+    if (url.pathname.startsWith("/charts/") && req.method === "POST") {
+      const auth = req.headers.get("authorization") ?? "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (!token) return json({ error: "Falta el token del usuario." }, 401);
+
+      const id = decodeURIComponent(url.pathname.slice("/charts/".length));
+      const body = (await req.json().catch(() => ({}))) as {
+        brandId?: string;
+        from?: string;
+        to?: string;
+      };
+      if (!body.brandId) return json({ error: "Falta brandId." }, 400);
+
+      try {
+        const chart = await buildChart(
+          { brandId: body.brandId, token },
+          id,
+          { from: body.from, to: body.to },
+        );
+        return json(chart);
+      } catch (err) {
+        return json({ error: err instanceof Error ? err.message : String(err) }, 502);
+      }
     }
 
     // ── Chat ─────────────────────────────────────────────────────────────────
