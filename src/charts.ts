@@ -33,6 +33,7 @@ const CATALOG: Spec[] = [
   { id: "appointments_by_status", title: "Turnos por estado",     type: "doughnut", tool: "list_appointments", field: "status" },
   { id: "attentions_by_status",   title: "Atenciones por estado", type: "doughnut", tool: "list_attentions",   field: "status" },
   { id: "exams_by_type",          title: "Exámenes por tipo",     type: "bar",      tool: "list_exams",        field: "exam_type" },
+  { id: "videovisits_by_specialty", title: "Videoconsultas por especialidad", type: "doughnut", tool: "list_videovisits", field: "specialty" },
 ];
 
 // Cuántas filas se piden para agrupar.
