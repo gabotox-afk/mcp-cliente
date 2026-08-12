@@ -29,42 +29,44 @@ Tres decisiones que definen el diseño:
 - **Conexión por request.** Las sesiones del MCP viven en memoria de su proceso,
   así que abrir y cerrar por mensaje lo hace inmune a reinicios del MCP.
 
-## Componentes
+## Qué hay acá
 
-| Carpeta | Qué es |
-|---|---|
-| `chat/` | Backend del chat (Bun) + página demo. Es lo único que se hospeda. |
-| `mcp-diagnostica/` | El servidor MCP. Copia del repo de Diagnostica, incluida acá para poder levantar el circuito completo de una. |
-| `mock-backend/` | Backend falso con datos de prueba, para desarrollar sin tocar datos reales. |
+Solo `chat/`: el backend del chat (Bun) más una página de demostración. Es lo
+único que se hospeda y lo único que este repo mantiene.
 
-Las tres carpetas son independientes: cada una tiene su `package.json` y sus
-dependencias. Están juntas por conveniencia de desarrollo, no porque se
-necesiten entre sí a nivel de código — el único contrato entre `chat/` y
-`mcp-diagnostica/` es el protocolo MCP sobre HTTP.
+**El servidor MCP no está acá, a propósito.** El chat no depende de ninguno en
+particular: descubre las tools con `tools/list` y habla el protocolo, nada más.
+Apuntarlo a otro MCP es cambiar una variable de entorno:
 
-> `mcp-diagnostica/` es un espejo, no la fuente de verdad. El repo original es
-> `Llaudet/mcp-diagnostica`; los cambios al MCP van allá.
+```
+MCP_BASE_URL=https://el-mcp-que-sea
+```
+
+Tenerlo adentro significaría mantener una copia de un repo ajeno, que se
+desincroniza en silencio la primera vez que alguien toca el original.
 
 ## Cómo levantarlo
 
-Tres procesos, tres terminales:
+El chat necesita un MCP corriendo del otro lado. Para desarrollo local eso son
+dos procesos más, que viven en sus propios repos:
+
+- un **servidor MCP** en `MCP_BASE_URL` (para Diagnostica:
+  [`Llaudet/mcp-diagnostica`](https://github.com/Llaudet/mcp-diagnostica),
+  levantado con `bun src/http.ts`)
+- el **backend** al que ese MCP consulta — el real, o uno de prueba apuntándole
+  con `BACKEND_URL`
+
+Con eso arriba:
 
 ```bash
-# 1. Backend de prueba (puerto 4000)
-cd mock-backend && npm install && node server.js
-
-# 2. Servidor MCP (puerto 3001), apuntando al backend de prueba
-cd mcp-diagnostica && bun install && BACKEND_URL=http://localhost:4000 bun src/http.ts
-
-# 3. Chat (puerto 3002)
 cd chat && bun install && bun src/server.ts
 ```
 
 Después, `http://localhost:3002`. La página demo simula el login de la empresa:
 pide las credenciales contra el backend directamente y abre el chat con el token
 que recibe. El chat-backend nunca ve la contraseña — solo recibe el token ya
-emitido, igual que pasaría embebido en el producto real. Usuarios de prueba en
-el mock: `admin@diagnostica.com` / `1234`.
+emitido, igual que pasaría embebido en el producto real. Las credenciales son
+las del backend que estés usando (`DEMO_BACKEND_URL`), no del chat.
 
 ## Configuración
 
