@@ -79,6 +79,30 @@ MCP_BASE_URL=http://localhost:3001
 
 **El `.env` nunca se sube**: tiene la API key y está en `.gitignore`.
 
+### Whitelist de tools
+
+`CHAT_ALLOWED_TOOLS` limita qué tools puede usar el chat. Vacío o sin setear =
+todas las que exponga el MCP.
+
+Va por configuración y no hardcodeada: los nombres son del MCP, no del chat, y
+clavarlos en el código lo ataría a un MCP puntual. La lista que viene en
+`.env.example` es la del MCP de Diagnostica: deja afuera `list_brands`
+(cross-brand, pide el rol `mcp_inspector`), `list_users` / `count_users` /
+`get_user` (directorio de staff) y `list_roles` (catálogo interno).
+
+Se aplica en dos lugares: al armar el catálogo que ve el modelo, y otra vez al
+ejecutar. Lo segundo importa — el modelo puede pedir una tool que no le
+ofrecimos, por alucinación o porque el historial menciona una que ya no existe.
+Filtrar solo en el catálogo sería una restricción sugerida, no aplicada.
+
+Si la lista nombra una tool que el MCP ya no expone, el chat lo avisa por
+consola al arrancar. Sin eso, una tool que desaparece degrada las respuestas en
+silencio.
+
+En el MCP de Diagnostica recorta el catálogo de 28 a 23 tools: 12.056 → 10.477
+tokens. La ganancia de costo es modesta porque el prompt caching ya absorbe casi
+todo; el motivo principal es de alcance, no de plata.
+
 Sin API key el chat arranca en modo *stub*: no interpreta lenguaje natural, pero
 el circuito completo (front → back → MCP) funciona igual. Sirve para verificar
 la infraestructura sin gastar tokens.

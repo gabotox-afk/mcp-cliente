@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { MCP_BASE_URL } from "./config.ts";
+import { ALLOWED_TOOLS, MCP_BASE_URL } from "./config.ts";
 
 // Cliente MCP propio: el chat backend es el ÚNICO que habla con el MCP.
 // Claude nunca se conecta al MCP — recibe definiciones de tools y resultados
@@ -75,10 +75,34 @@ async function withMcp<T>(session: McpSession, fn: (client: Client) => Promise<T
 const toolCache = new Map<string, { tools: AnthropicTool[]; at: number }>();
 const TOOL_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Se cachea el catálogo completo y se filtra al leer: así el cache representa
+// lo que el MCP ofrece, no lo que nosotros dejamos pasar.
+function applyWhitelist(tools: AnthropicTool[]): AnthropicTool[] {
+  if (ALLOWED_TOOLS.size === 0) return tools;
+  return tools.filter((t) => ALLOWED_TOOLS.has(t.name));
+}
+
+// Una whitelist con nombres que el MCP ya no expone se degrada en silencio: la
+// tool simplemente no aparece y el modelo responde peor sin que nadie se
+// entere. Avisamos una vez por catálogo.
+const warnedFor = new Set<string>();
+function warnUnknownNames(key: string, tools: AnthropicTool[]): void {
+  if (ALLOWED_TOOLS.size === 0 || warnedFor.has(key)) return;
+  warnedFor.add(key);
+
+  const available = new Set(tools.map((t) => t.name));
+  const missing = [...ALLOWED_TOOLS].filter((n) => !available.has(n));
+  if (missing.length > 0) {
+    console.warn(
+      `[mcp] CHAT_ALLOWED_TOOLS nombra ${missing.length} tool(s) que el MCP no expone: ${missing.join(", ")}`,
+    );
+  }
+}
+
 export async function listTools(session: McpSession): Promise<AnthropicTool[]> {
   const key = `${MCP_BASE_URL}|${session.brandId}`;
   const hit = toolCache.get(key);
-  if (hit && Date.now() - hit.at < TOOL_CACHE_TTL_MS) return hit.tools;
+  if (hit && Date.now() - hit.at < TOOL_CACHE_TTL_MS) return applyWhitelist(hit.tools);
 
   const tools = await withMcp(session, async (client) => {
     const res = await client.listTools();
@@ -93,7 +117,8 @@ export async function listTools(session: McpSession): Promise<AnthropicTool[]> {
   });
 
   toolCache.set(key, { tools, at: Date.now() });
-  return tools;
+  warnUnknownNames(key, tools);
+  return applyWhitelist(tools);
 }
 
 export type ToolCallResult = {
@@ -108,6 +133,14 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<ToolCallResult> {
+  // La whitelist se aplica también acá, no solo al armar el catálogo. El modelo
+  // puede pedir una tool que no le ofrecimos: por alucinación, o porque el
+  // catálogo cambió a mitad de conversación y el historial todavía la menciona.
+  // Filtrar solo en listTools sería una restricción sugerida, no aplicada.
+  if (ALLOWED_TOOLS.size > 0 && !ALLOWED_TOOLS.has(name)) {
+    return { text: `La herramienta "${name}" no está habilitada en este chat.`, isError: true };
+  }
+
   try {
     return await withMcp(session, async (client) => {
       const res = await client.callTool({ name, arguments: args });

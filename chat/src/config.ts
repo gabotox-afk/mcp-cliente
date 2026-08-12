@@ -33,3 +33,20 @@ export const AGENT_MODE: "real" | "stub" =
 // Tope de vueltas del loop de tools, para que un modelo que se enrosque no
 // deje la request colgada indefinidamente.
 export const MAX_TOOL_ITERATIONS = parseInt(process.env.CHAT_MAX_ITERATIONS ?? "8");
+
+// Whitelist de tools que el chat puede usar, separadas por coma. Vacío = todas.
+//
+// Va por configuración y no hardcodeada a propósito: los nombres de las tools
+// son del MCP, no del chat. Si los clavamos acá, el chat deja de funcionar
+// contra cualquier otro MCP.
+//
+// Sirve para dos cosas: recortar qué puede tocar el chat (un MCP puede exponer
+// tools administrativas que no tienen por qué estar en un chat de usuario
+// final), y bajar costo — cada tool son ~400 tokens de definición que viajan
+// en cada request.
+export const ALLOWED_TOOLS: ReadonlySet<string> = new Set(
+  (process.env.CHAT_ALLOWED_TOOLS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
