@@ -31,8 +31,15 @@ Tres decisiones que definen el diseño:
 
 ## Qué hay acá
 
-Solo `chat/`: el backend del chat (Bun) más una página de demostración. Es lo
-único que se hospeda y lo único que este repo mantiene.
+El backend del chat (Bun) más una página de demostración, y nada más:
+
+```
+src/config.ts      configuración por variables de entorno
+src/mcp-client.ts  cliente MCP — conexión, tools/list, tools/call
+src/agent.ts       loop de tools contra la API de Claude
+src/server.ts      HTTP + streaming SSE
+public/index.html  página demo
+```
 
 **El servidor MCP no está acá, a propósito.** El chat no depende de ninguno en
 particular: descubre las tools con `tools/list` y habla el protocolo, nada más.
@@ -59,7 +66,7 @@ dos procesos más, que viven en sus propios repos:
 Con eso arriba:
 
 ```bash
-cd chat && bun install && bun src/server.ts
+bun install && bun src/server.ts
 ```
 
 Después, `http://localhost:3002`. La página demo simula el login de la empresa:
@@ -70,7 +77,7 @@ las del backend que estés usando (`DEMO_BACKEND_URL`), no del chat.
 
 ## Configuración
 
-Copiar `chat/.env.example` a `chat/.env` y completar:
+Copiar `.env.example` a `.env` y completar:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
