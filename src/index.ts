@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 import { runChat, getDashboardCharts, type ChatMessage } from "./agent.ts";
+import { checkRateLimit } from "./rateLimit.ts";
 
 const PORT             = parseInt(process.env.PORT ?? "5000");
 const MOCK_SERVER_URL  = process.env.MOCK_SERVER_URL ?? "http://localhost:4000";
@@ -72,10 +73,18 @@ Bun.serve({
       if (!token) return Response.json({ error: "Falta el token del usuario." }, { status: 401 });
       const brandId = req.headers.get("x-brand-id") ?? DEFAULT_BRAND_ID;
 
+      const rateLimit = checkRateLimit(token);
+      if (!rateLimit.allowed) {
+        return Response.json(
+          { error: "Demasiados mensajes. Esperá un momento antes de volver a preguntar." },
+          { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds ?? 60) } },
+        );
+      }
+
       const { messages } = (await req.json()) as { messages: ChatMessage[] };
       try {
-        const reply = await runChat(token, brandId, messages);
-        return Response.json({ reply });
+        const { reply, charts } = await runChat(token, brandId, messages);
+        return Response.json({ reply, charts });
       } catch (err) {
         return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });
       }

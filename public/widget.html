@@ -7,14 +7,12 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
+  html, body {
     font-family: system-ui, -apple-system, sans-serif;
     background: #f7f8fc;
     color: #1b2142;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
   }
+  body { display: flex; flex-direction: column; min-height: 400px; }
   #status { padding: .6rem 1rem; font-size: .8rem; color: #6b7299; background: #eef0fa; }
   #charts {
     display: grid;
@@ -27,12 +25,14 @@
   .chart-card { background: #f7f8fc; border-radius: 10px; padding: .75rem; }
   .chart-card h3 { font-size: .75rem; font-weight: 600; color: #4a5178; margin-bottom: .5rem; }
   .chart-card canvas { max-height: 160px; }
-  #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; }
+  #messages { padding: 1rem; display: flex; flex-direction: column; gap: .6rem; min-height: 200px; }
   .msg { max-width: 80%; padding: .55rem .8rem; border-radius: 10px; font-size: .88rem; line-height: 1.4; white-space: pre-wrap; }
   .msg.user { align-self: flex-end; background: #1b2142; color: #fff; }
   .msg.assistant { align-self: flex-start; background: #eef0fa; color: #1b2142; }
   .msg.pending { opacity: .6; }
-  #form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid #e2e4f0; background: #fff; }
+  .msg-chart { width: 100%; max-width: 480px; border: 1px solid #e2e4f0; border-radius: 10px; height: 360px; margin-top: .4rem; }
+  .msg-pdf-link { display: inline-block; margin-top: .4rem; font-size: .8rem; color: #3a4599; }
+  #form { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid #e2e4f0; background: #fff; position: sticky; bottom: 0; }
   #input { flex: 1; padding: .6rem .75rem; border: 1px solid #d5d8e8; border-radius: 8px; font-size: .88rem; }
   #input:focus { outline: none; border-color: #3a4599; }
   #send { padding: .6rem 1.1rem; background: #1b2142; color: #fff; border: none; border-radius: 8px; font-size: .85rem; font-weight: 600; cursor: pointer; }
@@ -76,13 +76,41 @@
   // donde el padre manda el postMessage antes de que este listener exista).
   window.parent.postMessage({ type: "diagnostica-widget-ready" }, "*");
 
+  // El panel ya no scrollea internamente con altura fija -- crece con el contenido,
+  // y le avisa al padre cuánto mide para que ajuste el <iframe> en consecuencia.
+  let lastReportedHeight = 0;
+  function reportHeight() {
+    const height = document.body.scrollHeight;
+    if (height === lastReportedHeight) return;
+    lastReportedHeight = height;
+    window.parent.postMessage({ type: "diagnostica-widget-resize", height }, "*");
+  }
+  new ResizeObserver(reportHeight).observe(document.body);
+
   function addMessage(role, text) {
     const div = document.createElement("div");
     div.className = `msg ${role}`;
     div.textContent = text;
     messagesEl.appendChild(div);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
     return div;
+  }
+
+  function addChart(html, pdfLinkText) {
+    const iframe = document.createElement("iframe");
+    iframe.className = "msg-chart";
+    iframe.srcdoc = html;
+    messagesEl.appendChild(iframe);
+
+    const urlMatch = pdfLinkText.match(/https?:\/\/\S+/);
+    if (urlMatch) {
+      const link = document.createElement("a");
+      link.className = "msg-pdf-link";
+      link.href = urlMatch[0];
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Descargar PDF del gráfico";
+      messagesEl.appendChild(link);
+    }
   }
 
   async function loadCharts() {
@@ -141,6 +169,9 @@
       pending.classList.remove("pending");
       pending.textContent = data.reply;
       history.push({ role: "assistant", content: data.reply });
+      for (const chart of data.charts ?? []) {
+        addChart(chart.html, chart.pdfLink);
+      }
     } catch (err) {
       pending.classList.remove("pending");
       pending.textContent = `Error: ${err.message}`;
