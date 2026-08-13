@@ -112,6 +112,38 @@ export async function generateChart(
   );
 }
 
+// Resuelve una ruta con puntos: "professional.name" baja un nivel. Sin esto,
+// cualquier campo anidado queda fuera de alcance — y los datos interesantes
+// suelen estar anidados (el médico de una atención, por ejemplo).
+function valueAt(row: Record<string, unknown> | undefined, path: string): unknown {
+  let cur: unknown = row;
+  for (const part of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+// Rutas agrupables de una fila de ejemplo, bajando un nivel en los objetos.
+// Es lo que se le ofrece al modelo cuando pide un campo que no sirve.
+function paths(value: unknown, prefix = ""): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return prefix ? [prefix] : [];
+  }
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const full = prefix ? `${prefix}.${k}` : k;
+    // Un solo nivel de profundidad: alcanza para los casos reales y evita
+    // devolverle al modelo un árbol enorme.
+    if (v !== null && typeof v === "object" && !Array.isArray(v) && !prefix) {
+      out.push(...Object.keys(v as Record<string, unknown>).map((sub) => `${full}.${sub}`));
+    } else {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
 function dayOf(value: unknown): string | null {
   const d = new Date(String(value));
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
@@ -161,10 +193,19 @@ async function build(
 
   const tally = new Map<string, number>();
   let missing = 0;
+  let objectValued = false;
 
   for (const row of rows as Array<Record<string, unknown>>) {
-    const raw = row?.[spec.field];
+    const raw = valueAt(row, spec.field);
     if (raw === undefined || raw === null || raw === "") {
+      missing++;
+      continue;
+    }
+    // Agrupar por un campo que es un objeto daría String(objeto) =
+    // "[object Object]" para todas las filas: un gráfico de una sola barra, sin
+    // error y sin sentido. Hay que agrupar por algo de adentro.
+    if (typeof raw === "object") {
+      objectValued = true;
       missing++;
       continue;
     }
@@ -176,18 +217,23 @@ async function build(
     tally.set(key, (tally.get(key) ?? 0) + 1);
   }
 
-  // Que ninguna fila tenga el campo no es "no hay datos": es que el backend
-  // cambió de forma y este gráfico quedó viejo. Callarlo devolvería un gráfico
-  // vacío, que se lee como "no pasó nada" y es mentira.
-  //
-  // El error nombra los campos que sí están. Eso es lo que le permite al modelo
-  // corregirse solo cuando pide agrupar por un campo que no existe, sin que
-  // tengamos que mantener a mano un catálogo de campos por entidad.
+  // Que ninguna fila agrupe no es "no hay datos": o el campo no existe, o es un
+  // objeto. Devolver un gráfico vacío se leería como "no pasó nada", que es
+  // mentira. Los dos errores nombran las rutas disponibles para que el modelo
+  // se corrija solo, sin que haya que mantener un catálogo de campos por
+  // entidad.
   if (rows.length > 0 && tally.size === 0) {
-    const sample = rows[0] as Record<string, unknown>;
+    const sample = (rows[0] ?? {}) as Record<string, unknown>;
+    if (objectValued) {
+      const inner = paths(sample[spec.field.split(".")[0]!], spec.field.split(".")[0]!);
+      throw new Error(
+        `"${spec.field}" es un objeto, no se puede agrupar por ahí. ` +
+          `Probá con una de estas rutas: ${inner.join(", ")}.`,
+      );
+    }
     throw new Error(
       `Ninguna de las ${rows.length} filas de ${spec.tool} tiene el campo "${spec.field}". ` +
-        `Los campos disponibles son: ${Object.keys(sample ?? {}).join(", ")}.`,
+        `Los campos disponibles son: ${paths(sample).join(", ")}.`,
     );
   }
 

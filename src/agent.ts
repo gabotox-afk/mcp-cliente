@@ -27,7 +27,10 @@ Reglas:
 - Si ninguna herramienta puede responder la pregunta, decilo claramente en vez de aproximar.
 - Los datos de pacientes vienen anonimizados a propósito: no tienen nombre. No inventes nombres ni intentes identificar personas.
 - Respondé en castellano rioplatense, de forma concisa y directa. Dar el número o el hallazgo primero, el detalle después.
-- Si una pregunta necesita varias consultas, hacelas y después resumí.`;
+- Si una pregunta necesita varias consultas, hacelas y después resumí.
+- Si el pedido admite una lectura razonable, resolvelo con esa lectura y aclarala al responder. No pidas permiso ni aclaraciones para algo que podés asumir: el usuario corrige si no era lo que quería, y pedirle que reformule le cuesta más que ver un resultado y ajustarlo. Preguntá solo si hay dos lecturas muy distintas y elegir mal lo mandaría para cualquier lado.
+- Si no te dan un rango de fechas, usá todos los datos disponibles. No pidas fechas.
+- Antes de decir que un dato no existe, fijate en lo que devuelven las herramientas. Los campos interesantes suelen venir anidados: el profesional de una atención está en professional.name, no en un campo suelto.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tools locales: las resuelve este backend, no el MCP.
@@ -61,7 +64,9 @@ const LOCAL_TOOLS: AnthropicTool[] = [
           type: "string",
           description:
             "Campo de cada fila por el que agrupar, por ejemplo 'specialty', 'status', 'type' o 'date'. " +
-            "Si no existe, el error te va a decir qué campos hay disponibles.",
+            "Acepta rutas anidadas con punto: 'professional.name' agrupa por el nombre del profesional " +
+            "que está adentro del objeto 'professional'. Si el campo no existe o es un objeto, el error " +
+            "te va a decir qué rutas hay disponibles — probá de nuevo con una de ésas.",
         },
         type: {
           type: "string",
