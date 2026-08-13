@@ -8,10 +8,13 @@
   *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
     --navy: #313a5c; --navy-hover: #262e4a; --panel: #1a2140;
-    --line: #e2e8f0; --muted: #94a3b8; --ink: #1e293b;
+    --line: #e6e9f2; --muted: #8b94ab; --ink: #1c2135;
+    --bg: #f5f6fa;
+    --shadow-sm: 0 1px 2px rgba(28,33,53,.05);
+    --shadow-md: 0 8px 24px -6px rgba(28,33,53,.14), 0 2px 6px rgba(28,33,53,.06);
   }
   html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; }
-  body { background: #f8fafc; color: var(--ink); }
+  body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
 
   /* ── Login ───────────────────────────────────────────────────────────── */
   #login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
@@ -29,48 +32,94 @@
   .hint code { background: #f1f5f9; color: #475569; padding: .05rem .3rem; border-radius: 4px; font-size: .95em; }
 
   /* ── Chat ────────────────────────────────────────────────────────────── */
-  #app { display: none; height: 100vh; flex-direction: column; max-width: 780px; margin: 0 auto; }
-  header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .6rem; background: #fff; }
-  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #7c86b8; }
-  header .title { font-weight: 700; }
-  header .mode { margin-left: auto; font-size: .75rem; color: var(--muted); }
-  #log { flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+  #app { display: none; height: 100vh; flex-direction: column; max-width: 860px; margin: 0 auto;
+         background: var(--bg); border-inline: 1px solid var(--line); }
 
-  .msg { max-width: 88%; padding: .8rem 1rem; border-radius: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { align-self: flex-end; background: var(--navy); color: #fff; }
-  .msg.bot { align-self: flex-start; background: #fff; border: 1px solid var(--line); }
+  /* Barra superior. Antes era un renglón con un punto y el id del modelo; ahora
+     identifica a la organización y deja el modelo como dato secundario, que es
+     lo que es para quien usa el chat. */
+  header { display: flex; align-items: center; gap: .7rem; padding: .8rem 1.15rem;
+           border-bottom: 1px solid var(--line); background: rgba(255,255,255,.88);
+           backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 20; }
+  .mark { width: 34px; height: 34px; border-radius: 10px; flex: none; display: grid; place-items: center;
+          background: linear-gradient(135deg, #3b466f, #262e4a); color: #fff; font-weight: 700; font-size: .9rem;
+          box-shadow: 0 2px 7px rgba(49,58,92,.3); }
+  .ident { display: flex; flex-direction: column; gap: .12rem; min-width: 0; }
+  .ident .name { font-weight: 650; font-size: .93rem; letter-spacing: -.01em; line-height: 1.2; }
+  .ident .status { font-size: .72rem; color: var(--muted); display: flex; align-items: center; gap: .35rem; }
+  .ident .live { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex: none;
+                 box-shadow: 0 0 0 3px rgba(34,197,94,.16); }
+  .spacer { margin-left: auto; }
+
+  /* Menú de gráficos. Reemplaza la tira horizontal: siete botones no entraban y
+     aparecía una barra de scroll. Un menú no tiene ese techo. */
+  .menu-wrap { position: relative; }
+  .ghost { width: auto; margin: 0; padding: .45rem .75rem; font-size: .82rem; font-weight: 550;
+           background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 9px;
+           display: inline-flex; align-items: center; gap: .4rem; box-shadow: var(--shadow-sm); }
+  .ghost:hover { background: #f4f6fb; border-color: #ccd3e4; }
+  .ghost .caret { font-size: .6em; color: var(--muted); transition: transform .18s ease; }
+  .ghost.open .caret { transform: rotate(180deg); }
+  #chartsMenu { position: absolute; right: 0; top: calc(100% + .4rem); width: 272px; padding: .3rem;
+                background: #fff; border: 1px solid var(--line); border-radius: 12px;
+                box-shadow: var(--shadow-md); z-index: 30; display: none;
+                animation: pop .16s ease both; }
+  #chartsMenu.open { display: block; }
+  @keyframes pop { from { opacity: 0; transform: translateY(-5px); } }
+  #chartsMenu button { width: 100%; margin: 0; padding: .5rem .55rem; text-align: left;
+                       background: none; color: var(--ink); border: none; border-radius: 8px;
+                       font-size: .85rem; font-weight: 500; display: flex; align-items: center; gap: .6rem; }
+  #chartsMenu button:hover:not(:disabled) { background: #f2f5fb; }
+  #chartsMenu button:disabled { opacity: .45; cursor: wait; background: none; }
+  #chartsMenu .ico { width: 24px; height: 24px; border-radius: 7px; flex: none; display: grid; place-items: center;
+                     background: #eef1f9; color: #4d5a86; }
+
+  #log { flex: 1; overflow-y: auto; padding: 1.4rem 1.15rem; display: flex; flex-direction: column; gap: .85rem; }
+
+  .row { display: flex; gap: .55rem; align-items: flex-start; animation: rise .22s ease both; }
+  .row.user { justify-content: flex-end; }
+  @keyframes rise { from { opacity: 0; transform: translateY(7px); } }
+  .av { width: 26px; height: 26px; border-radius: 8px; flex: none; margin-top: .12rem;
+        background: linear-gradient(135deg, #3b466f, #262e4a); }
+
+  .msg { max-width: 78%; padding: .72rem .95rem; border-radius: 15px; line-height: 1.62; font-size: .93rem;
+         white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: var(--navy); color: #fff; border-bottom-right-radius: 5px; }
+  .msg.bot { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; box-shadow: var(--shadow-sm); }
   .msg.bot code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 4px; font-size: .9em; }
 
-  .tools { align-self: flex-start; display: flex; flex-direction: column; gap: .3rem; }
-  .tool { font-size: .8rem; color: #475569; background: #f1f5f9; border: 1px solid var(--line); border-radius: 999px; padding: .3rem .8rem; display: inline-flex; align-items: center; gap: .45rem; }
-  .tool .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid #cbd5e1; border-top-color: var(--navy); animation: sp .7s linear infinite; }
+  .tools { align-self: flex-start; display: flex; flex-wrap: wrap; gap: .3rem; margin-left: 2.15rem; }
+  .tool { font-size: .76rem; color: #5a6480; background: #fff; border: 1px solid var(--line); border-radius: 999px;
+          padding: .28rem .7rem; display: inline-flex; align-items: center; gap: .45rem; box-shadow: var(--shadow-sm); }
+  .tool .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid #d5dbe8; border-top-color: var(--navy); animation: sp .7s linear infinite; }
   .tool.ok .spin { border: none; width: auto; height: auto; animation: none; }
   .tool.ok .spin::after { content: "✓"; color: #16a34a; font-weight: 700; }
   .tool.fail .spin { border: none; animation: none; }
   .tool.fail .spin::after { content: "✕"; color: #dc2626; font-weight: 700; }
   @keyframes sp { to { transform: rotate(360deg); } }
 
-  .empty { color: var(--muted); text-align: center; margin: auto 0; line-height: 1.8; font-size: .95rem; }
-  .empty b { color: var(--ink); display: block; margin-bottom: .5rem; font-weight: 600; }
-  .sug { display: inline-block; margin: .2rem; padding: .4rem .8rem; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; background: #fff; font-size: .85rem; }
-  .sug:hover { border-color: #47517a; }
+  .empty { margin: auto 0; text-align: center; padding: 0 .5rem; }
+  .empty .big { font-size: 1.18rem; font-weight: 650; letter-spacing: -.015em; margin-bottom: .3rem; }
+  .empty .lead { color: var(--muted); font-size: .89rem; margin-bottom: 1.15rem; }
+  .sug { display: inline-block; margin: .22rem; padding: .45rem .85rem; border: 1px solid var(--line);
+         border-radius: 999px; cursor: pointer; background: #fff; font-size: .84rem; color: #55607d;
+         box-shadow: var(--shadow-sm); transition: border-color .15s, color .15s; }
+  .sug:hover { border-color: #aab4cf; color: var(--ink); }
 
-  form#send { display: flex; gap: .6rem; padding: 1rem 1.25rem; border-top: 1px solid var(--line); background: #fff; }
-  form#send input { flex: 1; }
-  form#send button { width: auto; margin: 0; padding: .75rem 1.5rem; }
+  form#send { display: flex; gap: .5rem; align-items: center; padding: .85rem 1.15rem;
+              border-top: 1px solid var(--line); background: #fff; }
+  form#send input { flex: 1; border-radius: 999px; padding: .7rem 1.05rem; font-size: .93rem; background: var(--bg); }
+  form#send input:focus { background: #fff; }
+  form#send button { width: 38px; height: 38px; flex: none; margin: 0; padding: 0; border-radius: 50%;
+                     display: grid; place-items: center; font-size: 1.1rem; line-height: 1; }
 
-  /* ── Gráficos predeterminados ────────────────────────────────────────── */
-  #bar { display: flex; gap: .4rem; padding: .7rem 1.25rem; border-bottom: 1px solid var(--line); background: #fff; overflow-x: auto; }
-  #bar button { width: auto; margin: 0; padding: .4rem .85rem; font-size: .82rem; font-weight: 500;
-                background: #fff; color: #475569; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap; }
-  #bar button:hover:not(:disabled) { border-color: #47517a; background: #f8fafc; }
-  #bar button:disabled { opacity: .5; cursor: wait; background: #fff; }
-
-  .chart { align-self: stretch; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
-  .chart h3 { font-size: .95rem; font-weight: 600; margin-bottom: .15rem; }
-  .chart .meta { font-size: .75rem; color: var(--muted); margin-bottom: .8rem; }
-  .chart .warn { color: #92400e; background: #fef3c7; border-radius: 6px; padding: .35rem .6rem; display: inline-block; }
-  .chart .box { position: relative; height: 260px; }
+  /* ── Gráficos ────────────────────────────────────────────────────────── */
+  .chart { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 1.05rem 1.1rem;
+           box-shadow: var(--shadow-sm); animation: rise .22s ease both; }
+  .chart h3 { font-size: .93rem; font-weight: 620; margin-bottom: .2rem; letter-spacing: -.01em; }
+  .chart .meta { font-size: .74rem; color: var(--muted); margin-bottom: .85rem; }
+  .chart .warn { color: #92400e; background: #fef3c7; border-radius: 6px; padding: .3rem .55rem; display: inline-block; }
+  .chart .box { position: relative; height: 265px; }
 </style>
 </head>
 <body>
@@ -100,22 +149,30 @@
 
 <div id="app">
   <header>
-    <span class="dot"></span>
-    <span class="title">Asistente de datos</span>
-    <span class="mode" id="mode"></span>
+    <div class="mark">D</div>
+    <div class="ident">
+      <span class="name">Diagnóstica</span>
+      <span class="status"><i class="live"></i><span id="mode"></span></span>
+    </div>
+    <div class="spacer"></div>
+    <div class="menu-wrap">
+      <button type="button" class="ghost" id="chartsBtn">Gráficos <span class="caret">▾</span></button>
+      <div id="chartsMenu"></div>
+    </div>
   </header>
-  <div id="bar"></div>
   <div id="log">
     <div class="empty" id="empty">
-      <b>Preguntá sobre tus datos</b>
+      <div class="big">¿Qué querés saber?</div>
+      <div class="lead">Preguntá en lenguaje natural sobre los datos de tu organización.</div>
       <span class="sug">¿Cuántas sesiones hay registradas?</span>
-      <span class="sug">¿Cuántos pacientes tenemos?</span>
+      <span class="sug">Gráfico de torta de videoconsultas por especialidad</span>
+      <span class="sug">Mostrame la evolución de las sesiones en el tiempo</span>
       <span class="sug">Listame los kioscos</span>
     </div>
   </div>
   <form id="send">
     <input id="q" placeholder="Escribí tu pregunta…" autocomplete="off">
-    <button type="submit" id="sendBtn">Enviar</button>
+    <button type="submit" id="sendBtn" aria-label="Enviar" title="Enviar">↑</button>
   </form>
 </div>
 
@@ -179,19 +236,44 @@ $("loginForm").addEventListener("submit", async (e) => {
 
 const PALETTE = ["#313a5c", "#7c86b8", "#a3adcf", "#4f5b8c", "#c7cde3", "#606d9e", "#8e98c4"];
 
+// Un ícono por tipo de gráfico, para que el menú se lea de un vistazo.
+const ICONS = {
+  bar: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="6" width="2.6" height="5" rx=".7" fill="currentColor"/><rect x="4.7" y="2.6" width="2.6" height="8.4" rx=".7" fill="currentColor"/><rect x="8.4" y="7.6" width="2.6" height="3.4" rx=".7" fill="currentColor"/></svg>',
+  doughnut: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="19 9"/></svg>',
+  line: '<svg width="12" height="12" viewBox="0 0 12 12"><polyline points="1,9.2 4.2,5.4 7,7 11,2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+const menu = () => $("chartsMenu");
+
+function toggleMenu(open) {
+  const show = open ?? !menu().classList.contains("open");
+  menu().classList.toggle("open", show);
+  $("chartsBtn").classList.toggle("open", show);
+}
+
+$("chartsBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
+// Cerrar al hacer click afuera o con Escape: si no, el menú queda abierto
+// tapando los mensajes.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".menu-wrap")) toggleMenu(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleMenu(false); });
+
 async function loadCharts() {
   const r = await fetch("/charts");
   const { charts } = await r.json();
   for (const c of charts) {
     const b = document.createElement("button");
-    b.textContent = c.title;
+    b.innerHTML = '<span class="ico">' + (ICONS[c.type] || ICONS.bar) + "</span>";
+    b.appendChild(document.createTextNode(c.title));
     b.onclick = () => runChart(c, b);
-    $("bar").appendChild(b);
+    menu().appendChild(b);
   }
 }
 
 async function runChart(spec, btn) {
   if ($("empty")) $("empty").remove();
+  toggleMenu(false);
   btn.disabled = true;
   try {
     const r = await fetch("/charts/" + encodeURIComponent(spec.id), {
@@ -275,7 +357,20 @@ function addMsg(cls, text) {
   const d = document.createElement("div");
   d.className = "msg " + cls;
   d.textContent = text;
-  $("log").appendChild(d);
+
+  // La burbuja va dentro de una fila. El avatar es un hermano, no un hijo:
+  // el streaming pisa el textContent de la burbuja en cada token, y si el
+  // avatar viviera adentro se borraría en el primero.
+  const row = document.createElement("div");
+  row.className = "row " + cls;
+  if (cls === "bot") {
+    const av = document.createElement("div");
+    av.className = "av";
+    row.appendChild(av);
+  }
+  row.appendChild(d);
+
+  $("log").appendChild(row);
   $("log").scrollTop = $("log").scrollHeight;
   return d;
 }
