@@ -1,6 +1,6 @@
 import { join } from "path";
 import { runAgent, type ChatEvent, type ChatMessage } from "./agent.ts";
-import { buildChart, chartCatalog } from "./charts.ts";
+import { buildChart, buildSummary } from "./charts.ts";
 import { PORT, MCP_BASE_URL, DEMO_BACKEND_URL, DEMO_BRAND_ID, AGENT_MODE, MODEL } from "./config.ts";
 
 // Backend del chat. Es la única pieza que hospedamos nosotros y la única que
@@ -20,6 +20,11 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
+
+function bearer(req: Request): string {
+  const auth = req.headers.get("authorization") ?? "";
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+}
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -65,34 +70,40 @@ Bun.serve({
       });
     }
 
-    // ── Gráficos predeterminados ─────────────────────────────────────────────
-    // El catálogo es público (son solo títulos, no hay datos), pero ejecutar
-    // uno pide el token del usuario igual que el chat: el gráfico sale de las
-    // mismas tools del MCP y respeta los mismos permisos.
-    if (url.pathname === "/charts" && req.method === "GET") {
-      return json({ charts: chartCatalog() });
-    }
+    // ── Gráficos y resumen ───────────────────────────────────────────────────
+    // Los dos piden el token del usuario: salen de las mismas tools del MCP y
+    // respetan los mismos permisos que el chat.
 
-    if (url.pathname.startsWith("/charts/") && req.method === "POST") {
-      const auth = req.headers.get("authorization") ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    // Rearmar un gráfico con otros parámetros. Es lo que usa el front cuando el
+    // usuario cambia el período o el tipo de un gráfico ya dibujado, sin tener
+    // que volver a pasar por el modelo.
+    if (url.pathname === "/chart" && req.method === "POST") {
+      const token = bearer(req);
       if (!token) return json({ error: "Falta el token del usuario." }, 401);
 
-      const id = decodeURIComponent(url.pathname.slice("/charts/".length));
-      const body = (await req.json().catch(() => ({}))) as {
-        brandId?: string;
-        from?: string;
-        to?: string;
-      };
+      const body = (await req.json().catch(() => ({}))) as Record<string, string | undefined>;
       if (!body.brandId) return json({ error: "Falta brandId." }, 400);
 
       try {
-        const chart = await buildChart(
-          { brandId: body.brandId, token },
-          id,
-          { from: body.from, to: body.to },
-        );
-        return json(chart);
+        const { brandId, ...spec } = body;
+        return json(await buildChart({ brandId, token }, spec as never));
+      } catch (err) {
+        return json({ error: err instanceof Error ? err.message : String(err) }, 502);
+      }
+    }
+
+    if (url.pathname === "/summary" && req.method === "POST") {
+      const token = bearer(req);
+      if (!token) return json({ error: "Falta el token del usuario." }, 401);
+
+      const body = (await req.json().catch(() => ({}))) as {
+        brandId?: string; from?: string; to?: string;
+      };
+      if (!body.brandId) return json({ error: "Falta brandId." }, 400);
+      if (!body.from || !body.to) return json({ error: "Faltan 'from' y 'to'." }, 400);
+
+      try {
+        return json(await buildSummary({ brandId: body.brandId, token }, body.from, body.to));
       } catch (err) {
         return json({ error: err instanceof Error ? err.message : String(err) }, 502);
       }
@@ -100,8 +111,7 @@ Bun.serve({
 
     // ── Chat ─────────────────────────────────────────────────────────────────
     if (url.pathname === "/chat" && req.method === "POST") {
-      const auth = req.headers.get("authorization") ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      const token = bearer(req);
       if (!token) return json({ error: "Falta el token del usuario." }, 401);
 
       const body = (await req.json()) as { brandId?: string; messages?: ChatMessage[] };

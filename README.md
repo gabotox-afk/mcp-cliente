@@ -116,41 +116,49 @@ Sin API key el chat arranca en modo *stub*: no interpreta lenguaje natural, pero
 el circuito completo (front → back → MCP) funciona igual. Sirve para verificar
 la infraestructura sin gastar tokens.
 
-## Gráficos predeterminados
+## Resumen y gráficos
 
-Una barra de botones sobre el chat: se elige uno y aparece el gráfico. **No
-pasan por el modelo** — el backend consulta el MCP y agrupa. Son deterministas,
-instantáneos y no gastan tokens. Un gráfico que sale de un menú fijo no tiene
-por qué costar plata ni depender de que el modelo transcriba bien los números.
+Al abrir, un **Resumen** del período con los indicadores clave comparados contra
+el período anterior de la misma duración. No pasa por el modelo: son `count_*`
+con fechas, que el backend responde con un entero exacto. Por eso tampoco sufre
+el problema de muestreo que sí tienen los gráficos.
 
-El catálogo vive en `src/charts.ts` y se expone en `GET /charts`; ejecutar uno
-es `POST /charts/:id` con el token del usuario, así que respeta los mismos
-permisos que el chat.
+```
+Sesiones 4 (▼ -20% vs anterior)   Videoconsultas 4 (= 0%)   Turnos 4 (▼ -33%)
+```
 
-Dibuja con Chart.js, servido desde `node_modules` en `/vendor/chart.umd.js` y no
-desde un CDN: el chat va embebido en el producto de una empresa, que puede estar
-detrás de un firewall sin salida a internet.
+La pregunta de apertura de casi cualquier panel no es "¿cuántas sesiones hay?"
+sino "¿venimos mejor o peor que antes?", y eso es un número contra otro número,
+no un gráfico.
 
-## Gráficos pedidos en la conversación
-
-*"Hacéme un gráfico de torta del tipo de consultas"* y el gráfico aparece en el
-hilo. Lo resuelve la tool `generate_chart`.
+Los **gráficos** salen del chat, a pedido: *"hacéme un gráfico de torta del tipo
+de consultas"*. Lo resuelve la tool `generate_chart`.
 
 **El modelo elige qué graficar, no los números.** Llama
 `generate_chart(source: "list_videovisits", group_by: "specialty", type: "doughnut")`
-y el backend consulta y agrupa — el mismo motor que usan los predeterminados.
-La alternativa habría sido que el modelo pasara `labels` y `values` sacados de
-su contexto, y ahí un número mal transcripto produce un gráfico que se ve
-perfecto y es falso. Eso no se detecta mirándolo.
+y el backend consulta y agrupa. La alternativa habría sido que el modelo pasara
+`labels` y `values` sacados de su contexto, y ahí un número mal transcripto
+produce un gráfico que se ve perfecto y es falso. Eso no se detecta mirándolo.
+
+`group_by` acepta rutas anidadas: `professional.name` agrupa por el médico que
+está dentro del objeto `professional`. Si el campo no existe —o es un objeto, que
+daría `[object Object]`— el error devuelve las rutas que sí sirven y el modelo se
+corrige solo, sin que haya que mantener un catálogo de campos por entidad.
 
 `generate_chart` es una **tool local**: la resuelve este backend, no el MCP.
 Dibujar es asunto del cliente; el MCP de la empresa ni siquiera sabe que existe
-un chat. El loop de tools despacha por nombre — las locales acá, el resto al
-MCP.
+un chat. El loop de tools despacha por nombre — las locales acá, el resto al MCP.
 
-El modelo no tiene una lista de qué campos se pueden agrupar. Si pide uno que no
-existe, el error le devuelve los campos que sí están en las filas y se corrige
-solo, sin que haya que mantener a mano un catálogo por entidad.
+Cada gráfico dibujado trae **controles**: período (30 d / 90 d / 12 m / todo) y
+tipo (barras / torta / línea). Van contra `POST /chart`, el mismo motor pero sin
+modelo de por medio, así que reencuadrar es instantáneo y no gasta un token. Sin
+eso un gráfico es una foto muerta: lo mirás y no podés preguntarle nada más.
+
+> Antes había un menú de siete gráficos predeterminados. Se eliminó: eran
+> combinaciones elegidas mirando qué campos existían, no qué le interesa a
+> alguien, y desde que el chat grafica cualquier cosa a pedido eran una versión
+> peor de lo mismo. Las sugerencias de la pantalla inicial cubren el
+> descubrimiento.
 
 ### La limitación importante
 
@@ -158,17 +166,16 @@ solo, sin que haya que mantener a mano un catálogo por entidad.
 número; no hay forma de pedirle "sesiones por estado". Así que cada gráfico trae
 las filas con `list_*` y agrupa acá.
 
-Eso funciona para volúmenes acotados y no escala. Cada gráfico compara las filas
-que trajo contra el `total` que reporta el backend, y si se quedó corto lo dice
-en pantalla: *"Muestra de 1000 sobre N registros"*. Un gráfico parcial
-presentado como total es el tipo de error que nadie detecta mirándolo.
+Eso funciona para volúmenes acotados y no escala. Peor: una muestra cortada no es
+una muestra aleatoria — si el backend devuelve ordenado, las primeras N son un
+tramo y las proporciones pueden estar sesgadas. Cada gráfico compara las filas
+que trajo contra el `total` que reporta el backend y avisa en pantalla cuando se
+quedó corto: *"Muestra de 1000 sobre N registros"*.
+
+El Resumen no tiene este problema, porque cuenta en vez de listar.
 
 La solución de fondo es un `group_by` en el backend — pendiente de hablar con
 Facu.
-
-`src/charts.ts` es la única parte del chat que sabe algo concreto del dominio
-(que las sesiones tienen `status`, que los exámenes tienen `exam_type`). Contra
-otro MCP, ese catálogo hay que rehacerlo; el resto del chat sigue sirviendo.
 
 ### Sobre el modelo
 

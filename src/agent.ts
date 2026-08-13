@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { listTools, callTool, type AnthropicTool, type McpSession } from "./mcp-client.ts";
-import { generateChart, type ChartData } from "./charts.ts";
+import { buildChart, type ChartData } from "./charts.ts";
 import { ANTHROPIC_API_KEY, MODEL, EFFORT, SUPPORTS_EFFORT, AGENT_MODE, MAX_TOOL_ITERATIONS } from "./config.ts";
 
 // Eventos que el agente le va emitiendo al front. El server los serializa a SSE.
@@ -96,7 +96,7 @@ async function callLocalTool(
     return { text: `Tool local desconocida: ${name}`, isError: true };
   }
   try {
-    const chart = await generateChart(session, input as Parameters<typeof generateChart>[1]);
+    const chart = await buildChart(session, input as Parameters<typeof buildChart>[1]);
     emit({ type: "chart", chart });
 
     // Al modelo le devolvemos los valores agrupados igual. No es para que los

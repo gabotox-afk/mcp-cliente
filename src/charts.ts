@@ -1,116 +1,53 @@
 import { callTool, type McpSession } from "./mcp-client.ts";
 
-// Gráficos predeterminados: un catálogo fijo que el usuario elige de una lista.
+// Dos cosas viven acá:
 //
-// No pasan por el modelo. Cada uno es una consulta al MCP más una agrupación,
-// así que el resultado es determinista, instantáneo y no gasta tokens. Un
-// gráfico que sale de un menú no tiene por qué costar plata.
+//   - buildChart: arma un gráfico agrupando las filas de una tool de listado.
+//     Lo usan tanto el modelo (vía generate_chart) como el front cuando el
+//     usuario cambia el período o el tipo de un gráfico ya dibujado.
 //
-// Esto vive en el chat y no en el MCP a propósito: dibujar es asunto del
-// cliente, no del dato. El MCP expone números; qué se hace con ellos es
-// decisión de quien los consume.
+//   - buildSummary: los indicadores del panel de apertura, con comparación
+//     contra el período anterior. No agrupa nada: son count_* con fechas, que
+//     el backend responde con un número exacto.
+//
+// Antes había además un catálogo fijo de siete gráficos predeterminados. Se
+// eliminó: eran combinaciones elegidas mirando qué campos existían, no qué le
+// interesa a alguien, y desde que el chat grafica cualquier cosa a pedido eran
+// una versión peor de lo mismo.
 
 export type ChartType = "bar" | "doughnut" | "line";
 
-type Spec = {
-  id: string;
-  title: string;
+// Todo lo necesario para reconstruir el gráfico. Viaja de vuelta al front con
+// los datos justamente para eso: sin el spec, un gráfico es una foto muerta y
+// no se puede cambiar el período ni el tipo sin volver a preguntar.
+export type ChartSpec = {
+  source: string;
+  group_by: string;
   type: ChartType;
-  tool: string;
-  /** Campo de cada fila por el que se agrupa. */
-  field: string;
-  /** Si es "day", agrupa fechas por día y ordena cronológicamente. */
-  bucket?: "day";
+  title: string;
+  from?: string;
+  to?: string;
 };
 
-// Los campos de abajo son los que devuelven las tools del MCP de Diagnostica.
-// Si se apunta el chat a otro MCP, este catálogo hay que rehacerlo — es la
-// única parte del chat que sabe algo concreto del dominio.
-const CATALOG: Spec[] = [
-  { id: "sessions_by_status",     title: "Sesiones por estado",   type: "doughnut", tool: "list_sessions",     field: "status" },
-  { id: "sessions_by_type",       title: "Sesiones por tipo",     type: "bar",      tool: "list_sessions",     field: "type" },
-  { id: "sessions_over_time",     title: "Sesiones por día",      type: "line",     tool: "list_sessions",     field: "date", bucket: "day" },
-  { id: "appointments_by_status", title: "Turnos por estado",     type: "doughnut", tool: "list_appointments", field: "status" },
-  { id: "attentions_by_status",   title: "Atenciones por estado", type: "doughnut", tool: "list_attentions",   field: "status" },
-  { id: "exams_by_type",          title: "Exámenes por tipo",     type: "bar",      tool: "list_exams",        field: "exam_type" },
-  { id: "videovisits_by_specialty", title: "Videoconsultas por especialidad", type: "doughnut", tool: "list_videovisits", field: "specialty" },
-];
+export type ChartData = ChartSpec & {
+  labels: string[];
+  values: number[];
+  /** Filas efectivamente agrupadas. */
+  counted: number;
+  /** Total que reporta el backend. Si es mayor que `counted`, esto es una muestra. */
+  total: number;
+  truncated: boolean;
+};
 
 // Cuántas filas se piden para agrupar.
 //
 // El MCP no tiene group_by: no hay forma de pedirle "sesiones por estado", solo
 // "dame las sesiones". Así que se traen las filas y se agrupan acá. Funciona
-// para volúmenes acotados; contra un histórico grande no escala, y por eso cada
-// gráfico avisa cuando se quedó corto (ver `truncated`).
-//
-// La solución de fondo es un group_by en el backend. Mientras tanto, esto.
+// para volúmenes acotados y no escala — y peor, una muestra cortada no es una
+// muestra aleatoria: si el backend devuelve ordenado, las primeras N son un
+// tramo y las proporciones pueden estar sesgadas. Por eso `truncated` se
+// reporta y el front lo muestra.
 const ROW_LIMIT = 1000;
-
-export type ChartData = {
-  id: string;
-  title: string;
-  type: ChartType;
-  labels: string[];
-  values: number[];
-  /** Filas efectivamente agrupadas. */
-  counted: number;
-  /** Total que reporta el backend. Si es mayor que `counted`, el gráfico es una muestra. */
-  total: number;
-  truncated: boolean;
-};
-
-export function chartCatalog(): Array<Pick<Spec, "id" | "title" | "type">> {
-  return CATALOG.map(({ id, title, type }) => ({ id, title, type }));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gráficos pedidos por el modelo durante la conversación.
-//
-// El modelo elige QUÉ graficar; los números los sigue trayendo el backend desde
-// el MCP. Nunca pasa por su contexto un valor que después tenga que transcribir
-// a la llamada — un número mal copiado produce un gráfico que se ve perfecto y
-// es falso, y eso no hay forma de detectarlo mirándolo.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type ChartRequest = {
-  source: string;
-  group_by: string;
-  type?: ChartType;
-  title?: string;
-  from?: string;
-  to?: string;
-};
-
-export async function generateChart(
-  session: McpSession,
-  req: ChartRequest,
-): Promise<ChartData> {
-  if (!req?.source || !req?.group_by) {
-    throw new Error("Faltan 'source' y/o 'group_by'.");
-  }
-  // Solo tools de listado: son las únicas que devuelven filas para agrupar.
-  // Las count_* devuelven un escalar y no sirven acá.
-  if (!req.source.startsWith("list_")) {
-    throw new Error(
-      `'source' tiene que ser una herramienta de listado (list_*), y "${req.source}" no lo es.`,
-    );
-  }
-
-  const byDay = /date|fecha|_at$/i.test(req.group_by);
-
-  return build(
-    session,
-    {
-      id: `adhoc:${req.source}:${req.group_by}`,
-      title: req.title?.trim() || `${req.source.replace(/^list_/, "")} por ${req.group_by}`,
-      type: req.type ?? (byDay ? "line" : "bar"),
-      tool: req.source,
-      field: req.group_by,
-      ...(byDay ? { bucket: "day" as const } : {}),
-    },
-    { from: req.from, to: req.to },
-  );
-}
 
 // Resuelve una ruta con puntos: "professional.name" baja un nivel. Sin esto,
 // cualquier campo anidado queda fuera de alcance — y los datos interesantes
@@ -149,28 +86,34 @@ function dayOf(value: unknown): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-export async function buildChart(
-  session: McpSession,
-  id: string,
-  range: { from?: string; to?: string } = {},
-): Promise<ChartData> {
-  const spec = CATALOG.find((c) => c.id === id);
-  if (!spec) throw new Error(`No existe el gráfico "${id}".`);
-  return build(session, spec, range);
-}
+export type ChartRequest = {
+  source: string;
+  group_by: string;
+  type?: ChartType;
+  title?: string;
+  from?: string;
+  to?: string;
+};
 
-// Motor único. Los gráficos predeterminados y los que pide el modelo pasan por
-// acá: la diferencia entre unos y otros es solamente de dónde salen los
-// parámetros, no cómo se construye el gráfico.
-async function build(
-  session: McpSession,
-  spec: Spec,
-  range: { from?: string; to?: string } = {},
-): Promise<ChartData> {
-  const res = await callTool(session, spec.tool, {
+export async function buildChart(session: McpSession, req: ChartRequest): Promise<ChartData> {
+  if (!req?.source || !req?.group_by) throw new Error("Faltan 'source' y/o 'group_by'.");
+
+  // Solo tools de listado: son las únicas que devuelven filas para agrupar.
+  // Las count_* devuelven un escalar y no sirven acá.
+  if (!req.source.startsWith("list_")) {
+    throw new Error(
+      `'source' tiene que ser una herramienta de listado (list_*), y "${req.source}" no lo es.`,
+    );
+  }
+
+  const byDay = /date|fecha|_at$/i.test(req.group_by);
+  const type: ChartType = req.type ?? (byDay ? "line" : "bar");
+  const title = req.title?.trim() || `${req.source.replace(/^list_/, "")} por ${req.group_by}`;
+
+  const res = await callTool(session, req.source, {
     limit: ROW_LIMIT,
-    ...(range.from ? { from: range.from } : {}),
-    ...(range.to ? { to: range.to } : {}),
+    ...(req.from ? { from: req.from } : {}),
+    ...(req.to ? { to: req.to } : {}),
   });
 
   // Un error de la tool llega como texto, no como excepción: puede ser que el
@@ -182,12 +125,12 @@ async function build(
   try {
     parsed = JSON.parse(res.text);
   } catch {
-    throw new Error(`${spec.tool} devolvió algo que no es JSON.`);
+    throw new Error(`${req.source} devolvió algo que no es JSON.`);
   }
 
   const body = parsed as { data?: unknown[]; total?: number };
   const rows = Array.isArray(parsed) ? parsed : (body.data ?? []);
-  if (!Array.isArray(rows)) throw new Error(`${spec.tool} no devolvió una lista.`);
+  if (!Array.isArray(rows)) throw new Error(`${req.source} no devolvió una lista.`);
 
   const total = typeof body.total === "number" ? body.total : rows.length;
 
@@ -196,7 +139,7 @@ async function build(
   let objectValued = false;
 
   for (const row of rows as Array<Record<string, unknown>>) {
-    const raw = valueAt(row, spec.field);
+    const raw = valueAt(row, req.group_by);
     if (raw === undefined || raw === null || raw === "") {
       missing++;
       continue;
@@ -209,7 +152,7 @@ async function build(
       missing++;
       continue;
     }
-    const key = spec.bucket === "day" ? dayOf(raw) : String(raw);
+    const key = byDay ? dayOf(raw) : String(raw);
     if (key === null) {
       missing++;
       continue;
@@ -225,32 +168,128 @@ async function build(
   if (rows.length > 0 && tally.size === 0) {
     const sample = (rows[0] ?? {}) as Record<string, unknown>;
     if (objectValued) {
-      const inner = paths(sample[spec.field.split(".")[0]!], spec.field.split(".")[0]!);
+      const head = req.group_by.split(".")[0]!;
       throw new Error(
-        `"${spec.field}" es un objeto, no se puede agrupar por ahí. ` +
-          `Probá con una de estas rutas: ${inner.join(", ")}.`,
+        `"${req.group_by}" es un objeto, no se puede agrupar por ahí. ` +
+          `Probá con una de estas rutas: ${paths(sample[head], head).join(", ")}.`,
       );
     }
     throw new Error(
-      `Ninguna de las ${rows.length} filas de ${spec.tool} tiene el campo "${spec.field}". ` +
+      `Ninguna de las ${rows.length} filas de ${req.source} tiene el campo "${req.group_by}". ` +
         `Los campos disponibles son: ${paths(sample).join(", ")}.`,
     );
   }
 
   const entries = [...tally.entries()].sort(
-    spec.bucket === "day"
+    byDay
       ? (a, b) => a[0].localeCompare(b[0])   // cronológico
       : (a, b) => b[1] - a[1],              // de mayor a menor
   );
 
   return {
-    id: spec.id,
-    title: spec.title,
-    type: spec.type,
+    source: req.source,
+    group_by: req.group_by,
+    type,
+    title,
+    from: req.from,
+    to: req.to,
     labels: entries.map(([k]) => k),
     values: entries.map(([, v]) => v),
     counted: rows.length - missing,
     total,
     truncated: rows.length < total,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resumen del período
+//
+// La pregunta que casi todos tienen al abrir un panel no es "¿cuántas sesiones
+// hay?" sino "¿venimos mejor o peor que antes?". Eso es un número contra otro
+// número, no un gráfico.
+//
+// Y sale barato y exacto: count_* con from/to lo responde el backend con un
+// entero. No hay que listar nada, así que no aparece el problema de la muestra
+// truncada que sí tienen los gráficos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const METRICS = [
+  { key: "sessions",     tool: "count_sessions",     label: "Sesiones" },
+  { key: "videovisits",  tool: "count_videovisits",  label: "Videoconsultas" },
+  { key: "attentions",   tool: "count_attentions",   label: "Atenciones" },
+  { key: "appointments", tool: "count_appointments", label: "Turnos" },
+  { key: "exams",        tool: "count_exams",        label: "Exámenes" },
+] as const;
+
+export type Metric = {
+  key: string;
+  label: string;
+  value: number | null;
+  previous: number | null;
+  error?: string;
+};
+
+export type Summary = {
+  from: string;
+  to: string;
+  prevFrom: string;
+  prevTo: string;
+  metrics: Metric[];
+};
+
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+async function count(
+  session: McpSession,
+  tool: string,
+  from: string,
+  to: string,
+): Promise<number> {
+  const res = await callTool(session, tool, { from, to });
+  if (res.isError) throw new Error(res.text);
+  const parsed = JSON.parse(res.text) as { count?: number };
+  if (typeof parsed.count !== "number") throw new Error(`${tool} no devolvió un count.`);
+  return parsed.count;
+}
+
+export async function buildSummary(
+  session: McpSession,
+  from: string,
+  to: string,
+): Promise<Summary> {
+  const start = new Date(from);
+  const end = new Date(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error("Rango de fechas inválido.");
+  }
+
+  // El período anterior es uno del mismo largo, pegado atrás. Comparar contra
+  // algo de otra duración daría una variación sin sentido.
+  const span = end.getTime() - start.getTime();
+  const prevTo = new Date(start.getTime() - 86_400_000);
+  const prevFrom = new Date(prevTo.getTime() - span);
+
+  const metrics = await Promise.all(
+    METRICS.map(async (m): Promise<Metric> => {
+      try {
+        const [value, previous] = await Promise.all([
+          count(session, m.tool, from, to),
+          count(session, m.tool, iso(prevFrom), iso(prevTo)),
+        ]);
+        return { key: m.key, label: m.label, value, previous };
+      } catch (err) {
+        // Una métrica que falla no debería vaciar el panel entero: puede estar
+        // fuera de CHAT_ALLOWED_TOOLS, o no existir en otro MCP.
+        return {
+          key: m.key,
+          label: m.label,
+          value: null,
+          previous: null,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
+
+  return { from, to, prevFrom: iso(prevFrom), prevTo: iso(prevTo), metrics };
 }

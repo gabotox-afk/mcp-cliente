@@ -51,28 +51,28 @@
                  box-shadow: 0 0 0 3px rgba(34,197,94,.16); }
   .spacer { margin-left: auto; }
 
-  /* Menú de gráficos. Reemplaza la tira horizontal: siete botones no entraban y
-     aparecía una barra de scroll. Un menú no tiene ese techo. */
-  .menu-wrap { position: relative; }
-  .ghost { width: auto; margin: 0; padding: .45rem .75rem; font-size: .82rem; font-weight: 550;
-           background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 9px;
-           display: inline-flex; align-items: center; gap: .4rem; box-shadow: var(--shadow-sm); }
-  .ghost:hover { background: #f4f6fb; border-color: #ccd3e4; }
-  .ghost .caret { font-size: .6em; color: var(--muted); transition: transform .18s ease; }
-  .ghost.open .caret { transform: rotate(180deg); }
-  #chartsMenu { position: absolute; right: 0; top: calc(100% + .4rem); width: 272px; padding: .3rem;
-                background: #fff; border: 1px solid var(--line); border-radius: 12px;
-                box-shadow: var(--shadow-md); z-index: 30; display: none;
-                animation: pop .16s ease both; }
-  #chartsMenu.open { display: block; }
-  @keyframes pop { from { opacity: 0; transform: translateY(-5px); } }
-  #chartsMenu button { width: 100%; margin: 0; padding: .5rem .55rem; text-align: left;
-                       background: none; color: var(--ink); border: none; border-radius: 8px;
-                       font-size: .85rem; font-weight: 500; display: flex; align-items: center; gap: .6rem; }
-  #chartsMenu button:hover:not(:disabled) { background: #f2f5fb; }
-  #chartsMenu button:disabled { opacity: .45; cursor: wait; background: none; }
-  #chartsMenu .ico { width: 24px; height: 24px; border-radius: 7px; flex: none; display: grid; place-items: center;
-                     background: #eef1f9; color: #4d5a86; }
+  .ghost { width: auto; margin: 0; padding: .4rem .7rem; font-size: .78rem; font-weight: 550;
+           background: #fff; color: #55607d; border: 1px solid var(--line); border-radius: 8px; }
+  .ghost:hover:not(:disabled) { background: #f4f6fb; border-color: #ccd3e4; color: var(--ink); }
+  .ghost.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+
+  /* ── Resumen del período ─────────────────────────────────────────────────
+     Reemplaza al menú de gráficos predeterminados. La pregunta de apertura no
+     es "¿cuántas sesiones hay?" sino "¿venimos mejor o peor que antes?", y eso
+     es un número contra otro, no un gráfico. */
+  #summary { border-bottom: 1px solid var(--line); background: #fff; padding: .85rem 1.15rem 1rem; }
+  #summary .head { display: flex; align-items: center; gap: .4rem; margin-bottom: .75rem; flex-wrap: wrap; }
+  #summary .head .t { font-size: .82rem; font-weight: 620; margin-right: auto; }
+  #summary .head .rng { font-size: .72rem; color: var(--muted); width: 100%; order: 3; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: .5rem; }
+  .kpi { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .7rem; background: #fcfcfe; }
+  .kpi .k { font-size: .7rem; color: var(--muted); margin-bottom: .2rem; }
+  .kpi .v { font-size: 1.35rem; font-weight: 660; letter-spacing: -.02em; line-height: 1.1; }
+  .kpi .d { font-size: .72rem; margin-top: .15rem; color: var(--muted); }
+  .kpi .d.up   { color: #15803d; }
+  .kpi .d.down { color: #b91c1c; }
+  .kpi.err .v { font-size: .8rem; font-weight: 500; color: var(--muted); }
+  #summary .none { font-size: .8rem; color: var(--muted); padding: .3rem 0; }
 
   #log { flex: 1; overflow-y: auto; padding: 1.4rem 1.15rem; display: flex; flex-direction: column; gap: .85rem; }
 
@@ -120,6 +120,14 @@
   .chart .meta { font-size: .74rem; color: var(--muted); margin-bottom: .85rem; }
   .chart .warn { color: #92400e; background: #fef3c7; border-radius: 6px; padding: .3rem .55rem; display: inline-block; }
   .chart .box { position: relative; height: 265px; }
+
+  /* Controles del gráfico. Sin esto un gráfico es una foto muerta: lo mirás y
+     no podés preguntarle nada más. Con esto se puede recortar el período y
+     cambiar la forma sin volver a pasar por el modelo — y sin gastar tokens. */
+  .chart .ctl { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
+                margin-top: .8rem; padding-top: .75rem; border-top: 1px solid var(--line); }
+  .chart .ctl .sep { width: 1px; height: 16px; background: var(--line); margin: 0 .25rem; }
+  .chart.busy { opacity: .55; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -154,20 +162,28 @@
       <span class="name">Diagnóstica</span>
       <span class="status"><i class="live"></i><span id="mode"></span></span>
     </div>
-    <div class="spacer"></div>
-    <div class="menu-wrap">
-      <button type="button" class="ghost" id="chartsBtn">Gráficos <span class="caret">▾</span></button>
-      <div id="chartsMenu"></div>
-    </div>
   </header>
+
+  <div id="summary">
+    <div class="head">
+      <span class="t">Resumen</span>
+      <button type="button" class="ghost" data-days="30">30 días</button>
+      <button type="button" class="ghost" data-days="90">90 días</button>
+      <button type="button" class="ghost" data-days="365">12 meses</button>
+      <span class="rng" id="summaryRange"></span>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </div>
+
   <div id="log">
     <div class="empty" id="empty">
       <div class="big">¿Qué querés saber?</div>
-      <div class="lead">Preguntá en lenguaje natural sobre los datos de tu organización.</div>
-      <span class="sug">¿Cuántas sesiones hay registradas?</span>
-      <span class="sug">Gráfico de torta de videoconsultas por especialidad</span>
-      <span class="sug">Mostrame la evolución de las sesiones en el tiempo</span>
-      <span class="sug">Listame los kioscos</span>
+      <div class="lead">Preguntá en lenguaje natural. Si pedís un gráfico, lo dibuja.</div>
+      <span class="sug">¿Bajaron las sesiones respecto del año pasado?</span>
+      <span class="sug">Gráfico de atenciones por médico</span>
+      <span class="sug">¿Qué especialidad tiene más videoconsultas?</span>
+      <span class="sug">Mostrame la evolución de las sesiones mes a mes</span>
+      <span class="sug">¿Cuántos turnos se cancelaron?</span>
     </div>
   </div>
   <form id="send">
@@ -219,7 +235,7 @@ $("loginForm").addEventListener("submit", async (e) => {
     $("app").style.display = "flex";
     $("q").focus();
     $("mode").textContent = CFG.agentMode === "real" ? CFG.model : "modo stub (sin API key)";
-    loadCharts();
+    loadSummary(30);
   } catch (err) {
     const msg = err instanceof TypeError
       ? "No se pudo contactar al backend de la empresa. ¿Está levantado?"
@@ -236,62 +252,147 @@ $("loginForm").addEventListener("submit", async (e) => {
 
 const PALETTE = ["#313a5c", "#7c86b8", "#a3adcf", "#4f5b8c", "#c7cde3", "#606d9e", "#8e98c4"];
 
-// Un ícono por tipo de gráfico, para que el menú se lea de un vistazo.
-const ICONS = {
-  bar: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="6" width="2.6" height="5" rx=".7" fill="currentColor"/><rect x="4.7" y="2.6" width="2.6" height="8.4" rx=".7" fill="currentColor"/><rect x="8.4" y="7.6" width="2.6" height="3.4" rx=".7" fill="currentColor"/></svg>',
-  doughnut: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="19 9"/></svg>',
-  line: '<svg width="12" height="12" viewBox="0 0 12 12"><polyline points="1,9.2 4.2,5.4 7,7 11,2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-};
+// ── Resumen del período ──────────────────────────────────────────────────────
+// No pasa por el modelo: son count_* con fechas, que el backend responde con un
+// número exacto. Por eso además no sufre el problema de la muestra truncada que
+// sí tienen los gráficos.
 
-const menu = () => $("chartsMenu");
+const iso = (d) => d.toISOString().slice(0, 10);
+const fmtDate = (s) => new Date(s + "T00:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
 
-function toggleMenu(open) {
-  const show = open ?? !menu().classList.contains("open");
-  menu().classList.toggle("open", show);
-  $("chartsBtn").classList.toggle("open", show);
-}
-
-$("chartsBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
-// Cerrar al hacer click afuera o con Escape: si no, el menú queda abierto
-// tapando los mensajes.
-document.addEventListener("click", (e) => {
-  if (!e.target.closest(".menu-wrap")) toggleMenu(false);
-});
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleMenu(false); });
-
-async function loadCharts() {
-  const r = await fetch("/charts");
-  const { charts } = await r.json();
-  for (const c of charts) {
-    const b = document.createElement("button");
-    b.innerHTML = '<span class="ico">' + (ICONS[c.type] || ICONS.bar) + "</span>";
-    b.appendChild(document.createTextNode(c.title));
-    b.onclick = () => runChart(c, b);
-    menu().appendChild(b);
+async function loadSummary(days) {
+  for (const b of document.querySelectorAll("#summary .ghost")) {
+    b.classList.toggle("on", Number(b.dataset.days) === days);
   }
-}
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 86400000);
+  $("summaryNone")?.remove();
+  $("kpis").innerHTML = "";
+  $("summaryRange").textContent = "Cargando…";
 
-async function runChart(spec, btn) {
-  if ($("empty")) $("empty").remove();
-  toggleMenu(false);
-  btn.disabled = true;
   try {
-    const r = await fetch("/charts/" + encodeURIComponent(spec.id), {
+    const r = await fetch("/summary", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
-      body: JSON.stringify({ brandId: BRAND }),
+      body: JSON.stringify({ brandId: BRAND, from: iso(from), to: iso(to) }),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
-    drawChart(d);
+    renderSummary(d);
   } catch (err) {
-    addMsg("bot", "No se pudo generar «" + spec.title + "»: " + err.message);
-  } finally {
-    btn.disabled = false;
+    $("summaryRange").textContent = "";
+    $("kpis").innerHTML = '<div class="none">No se pudo cargar el resumen: ' + err.message + "</div>";
   }
 }
 
-function drawChart(d) {
+function renderSummary(d) {
+  $("summaryRange").textContent =
+    fmtDate(d.from) + " – " + fmtDate(d.to) + "  ·  contra " + fmtDate(d.prevFrom) + " – " + fmtDate(d.prevTo);
+
+  const box = $("kpis");
+  box.innerHTML = "";
+  for (const m of d.metrics) {
+    const el = document.createElement("div");
+    el.className = "kpi" + (m.error ? " err" : "");
+
+    const k = document.createElement("div"); k.className = "k"; k.textContent = m.label;
+    const v = document.createElement("div"); v.className = "v";
+    el.append(k, v);
+
+    if (m.error) {
+      v.textContent = "no disponible";
+      el.title = m.error;
+    } else {
+      v.textContent = m.value;
+      const delta = document.createElement("div");
+      delta.className = "d";
+      // Sin base no hay porcentaje posible: 0 → 5 no es "+∞%", es "antes 0".
+      if (m.previous === 0) {
+        delta.textContent = m.value === 0 ? "sin datos en ningún período" : "antes 0";
+      } else {
+        const pct = Math.round(((m.value - m.previous) / m.previous) * 100);
+        delta.className = "d " + (pct > 0 ? "up" : pct < 0 ? "down" : "");
+        delta.textContent = (pct > 0 ? "▲ +" : pct < 0 ? "▼ " : "= ") + pct + "% vs anterior";
+      }
+      el.appendChild(delta);
+    }
+    box.appendChild(el);
+  }
+
+  // Un panel con todo en cero se lee como "no pasa nada". Casi siempre es que
+  // el período elegido no toca los datos, no que no haya actividad.
+  if (d.metrics.every((m) => m.value === 0)) {
+    const n = document.createElement("div");
+    n.id = "summaryNone";
+    n.className = "none";
+    n.textContent = "No hay actividad en este período. Probá con un rango más amplio.";
+    box.after(n);
+  }
+}
+
+for (const b of document.querySelectorAll("#summary .ghost")) {
+  b.onclick = () => loadSummary(Number(b.dataset.days));
+}
+
+// Rearma un gráfico ya dibujado con otros parámetros. Va contra /chart, que es
+// el mismo motor que usa el modelo — pero sin modelo de por medio, así que
+// cambiar el período o el tipo es instantáneo y no gasta un solo token.
+async function recharter(card, d, cambios) {
+  card.classList.add("busy");
+  try {
+    const r = await fetch("/chart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
+      body: JSON.stringify({
+        brandId: BRAND,
+        source: d.source, group_by: d.group_by, type: d.type, title: d.title,
+        from: d.from, to: d.to,
+        ...cambios,
+      }),
+    });
+    const nuevo = await r.json();
+    if (nuevo.error) throw new Error(nuevo.error);
+    drawChart(nuevo, card);   // drawChart ya se encarga de ponerlo en el lugar de `card`
+  } catch (err) {
+    card.classList.remove("busy");
+    addMsg("bot", "No se pudo actualizar el gráfico: " + err.message);
+  }
+}
+
+function periodControls(card, d) {
+  const ctl = document.createElement("div");
+  ctl.className = "ctl";
+
+  const chip = (texto, onClick, activo) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ghost" + (activo ? " on" : "");
+    b.textContent = texto;
+    b.onclick = onClick;
+    ctl.appendChild(b);
+    return b;
+  };
+
+  const hoy = new Date();
+  const desde = (dias) => iso(new Date(hoy.getTime() - dias * 86400000));
+
+  for (const [texto, dias] of [["30 d", 30], ["90 d", 90], ["12 m", 365]]) {
+    chip(texto, () => recharter(card, d, { from: desde(dias), to: iso(hoy) }), d.from === desde(dias));
+  }
+  chip("Todo", () => recharter(card, d, { from: undefined, to: undefined }), !d.from && !d.to);
+
+  const sep = document.createElement("span");
+  sep.className = "sep";
+  ctl.appendChild(sep);
+
+  for (const [texto, tipo] of [["Barras", "bar"], ["Torta", "doughnut"], ["Línea", "line"]]) {
+    chip(texto, () => recharter(card, d, { type: tipo }), d.type === tipo);
+  }
+
+  return ctl;
+}
+
+function drawChart(d, reemplazando) {
   const card = document.createElement("div");
   card.className = "chart";
 
@@ -317,8 +418,12 @@ function drawChart(d) {
   const canvas = document.createElement("canvas");
   box.appendChild(canvas);
 
-  card.append(h, meta, box);
-  $("log").appendChild(card);
+  card.append(h, meta, box, periodControls(card, d));
+
+  // Al rearmar, el que llama decide dónde va: reemplaza a la tarjeta vieja en
+  // su lugar, en vez de agregar una nueva al final del hilo.
+  if (reemplazando) reemplazando.replaceWith(card);
+  else $("log").appendChild(card);
 
   new Chart(canvas, {
     type: d.type,
@@ -342,7 +447,10 @@ function drawChart(d) {
     },
   });
 
-  $("log").scrollTop = $("log").scrollHeight;
+  // Al reemplazar no se hace scroll: el usuario está mirando ese gráfico y
+  // saltar al final del hilo lo sacaría de donde estaba.
+  if (!reemplazando) $("log").scrollTop = $("log").scrollHeight;
+  return card;
 }
 
 // ── Chat ─────────────────────────────────────────────────────────────────────
