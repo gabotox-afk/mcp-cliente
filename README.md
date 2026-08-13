@@ -34,12 +34,64 @@ Tres decisiones que definen el diseño:
 El backend del chat (Bun) más una página de demostración, y nada más:
 
 ```
-src/config.ts      configuración por variables de entorno
-src/mcp-client.ts  cliente MCP — conexión, tools/list, tools/call
-src/agent.ts       loop de tools contra la API de Claude
-src/server.ts      HTTP + streaming SSE
-public/index.html  página demo
+src/config.ts       configuración por variables de entorno
+src/mcp-client.ts   cliente MCP — conexión, tools/list, tools/call
+src/agent.ts        loop de tools contra la API de Claude
+src/charts.ts       gráficos y resumen del período
+src/rate-limit.ts   tope de consultas por usuario
+src/server.ts       HTTP + streaming SSE
+public/widget.html  el asistente — esto es lo que se embebe
+public/index.html   página demo que simula el sitio de la empresa
 ```
+
+## Cómo se embebe
+
+El widget corre dentro de un `<iframe>` en la página de la empresa. El iframe
+aísla el DOM y el CSS: ni el widget rompe la página que lo hospeda, ni la página
+rompe al widget.
+
+```html
+<iframe src="https://chat.tudominio.com/widget"></iframe>
+```
+
+El widget no tiene login. Cuando está listo avisa con un `postMessage`, y el host
+le responde con el token que ya tiene de su propia sesión:
+
+```js
+iframe.contentWindow.postMessage(
+  { type: "diagnostica-auth", token, brandId },
+  "https://chat.tudominio.com",   // NUNCA "*"
+);
+```
+
+Dos cosas que no son opcionales:
+
+- **El `targetOrigin` explícito.** Con `"*"` el navegador entrega el mensaje a
+  cualquier origen que haya quedado cargado en ese iframe, y lo que viaja adentro
+  es la sesión del usuario.
+- **`CHAT_ALLOWED_ORIGINS`.** El widget descarta mensajes de orígenes que no
+  estén en esa lista, el backend responde CORS solo a ellos, y `/widget` sale con
+  `Content-Security-Policy: frame-ancestors`, que impide que otro sitio lo monte
+  y se quede esperando un token. Vacía sirve para desarrollo y no para producción.
+
+El widget también reporta su alto por `postMessage`, para que el host pueda
+ajustar el iframe en vez de dejar una barra de scroll anidada.
+
+## Tope de consultas
+
+`CHAT_RATE_CHAT_PER_MIN` (15) y `CHAT_RATE_DATA_PER_MIN` (60), por usuario.
+
+Existe por una razón concreta: cada mensaje del chat es una llamada paga a la API
+de Claude. Sin tope, una pestaña con un bucle —o alguien con el token de un
+usuario— vacía la cuenta sin que nadie se entere hasta la factura.
+
+Son dos carriles porque el costo es distinto: el resumen y los gráficos no pasan
+por el modelo, solo pegan al MCP, así que ahí lo que se protege es el backend.
+
+Es en memoria: se resetea al reiniciar y con varias réplicas cada una lleva su
+propia cuenta, o sea el doble de cupo. Para eso haría falta un store compartido
+(Redis, como el que ya usa el MCP para OAuth). Conviene saberlo antes de escalar
+horizontalmente.
 
 **El servidor MCP no está acá, a propósito.** El chat no depende de ninguno en
 particular: descubre las tools con `tools/list` y habla el protocolo, nada más.

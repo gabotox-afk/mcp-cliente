@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chat MCP — demo</title>
+<title>Diagnóstica — panel</title>
 <style>
   *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -31,103 +31,19 @@
   .hint { margin-top: 1.5rem; font-size: .8rem; color: var(--muted); line-height: 1.6; }
   .hint code { background: #f1f5f9; color: #475569; padding: .05rem .3rem; border-radius: 4px; font-size: .95em; }
 
-  /* ── Chat ────────────────────────────────────────────────────────────── */
-  #app { display: none; height: 100vh; flex-direction: column; max-width: 860px; margin: 0 auto;
-         background: var(--bg); border-inline: 1px solid var(--line); }
-
-  /* Barra superior. Antes era un renglón con un punto y el id del modelo; ahora
-     identifica a la organización y deja el modelo como dato secundario, que es
-     lo que es para quien usa el chat. */
-  header { display: flex; align-items: center; gap: .7rem; padding: .8rem 1.15rem;
-           border-bottom: 1px solid var(--line); background: rgba(255,255,255,.88);
-           backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 20; }
-  .mark { width: 34px; height: 34px; border-radius: 10px; flex: none; display: grid; place-items: center;
-          background: linear-gradient(135deg, #3b466f, #262e4a); color: #fff; font-weight: 700; font-size: .9rem;
-          box-shadow: 0 2px 7px rgba(49,58,92,.3); }
-  .ident { display: flex; flex-direction: column; gap: .12rem; min-width: 0; }
-  .ident .name { font-weight: 650; font-size: .93rem; letter-spacing: -.01em; line-height: 1.2; }
-  .ident .status { font-size: .72rem; color: var(--muted); display: flex; align-items: center; gap: .35rem; }
-  .ident .live { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex: none;
-                 box-shadow: 0 0 0 3px rgba(34,197,94,.16); }
-  .spacer { margin-left: auto; }
-
-  .ghost { width: auto; margin: 0; padding: .4rem .7rem; font-size: .78rem; font-weight: 550;
-           background: #fff; color: #55607d; border: 1px solid var(--line); border-radius: 8px; }
-  .ghost:hover:not(:disabled) { background: #f4f6fb; border-color: #ccd3e4; color: var(--ink); }
-  .ghost.on { background: var(--navy); border-color: var(--navy); color: #fff; }
-
-  /* ── Resumen del período ─────────────────────────────────────────────────
-     Reemplaza al menú de gráficos predeterminados. La pregunta de apertura no
-     es "¿cuántas sesiones hay?" sino "¿venimos mejor o peor que antes?", y eso
-     es un número contra otro, no un gráfico. */
-  #summary { border-bottom: 1px solid var(--line); background: #fff; padding: .85rem 1.15rem 1rem; }
-  #summary .head { display: flex; align-items: center; gap: .4rem; margin-bottom: .75rem; flex-wrap: wrap; }
-  #summary .head .t { font-size: .82rem; font-weight: 620; margin-right: auto; }
-  #summary .head .rng { font-size: .72rem; color: var(--muted); width: 100%; order: 3; }
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: .5rem; }
-  .kpi { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .7rem; background: #fcfcfe; }
-  .kpi .k { font-size: .7rem; color: var(--muted); margin-bottom: .2rem; }
-  .kpi .v { font-size: 1.35rem; font-weight: 660; letter-spacing: -.02em; line-height: 1.1; }
-  .kpi .d { font-size: .72rem; margin-top: .15rem; color: var(--muted); }
-  .kpi .d.up   { color: #15803d; }
-  .kpi .d.down { color: #b91c1c; }
-  .kpi.err .v { font-size: .8rem; font-weight: 500; color: var(--muted); }
-  #summary .none { font-size: .8rem; color: var(--muted); padding: .3rem 0; }
-
-  #log { flex: 1; overflow-y: auto; padding: 1.4rem 1.15rem; display: flex; flex-direction: column; gap: .85rem; }
-
-  .row { display: flex; gap: .55rem; align-items: flex-start; animation: rise .22s ease both; }
-  .row.user { justify-content: flex-end; }
-  @keyframes rise { from { opacity: 0; transform: translateY(7px); } }
-  .av { width: 26px; height: 26px; border-radius: 8px; flex: none; margin-top: .12rem;
-        background: linear-gradient(135deg, #3b466f, #262e4a); }
-
-  .msg { max-width: 78%; padding: .72rem .95rem; border-radius: 15px; line-height: 1.62; font-size: .93rem;
-         white-space: pre-wrap; word-break: break-word; }
-  .msg.user { background: var(--navy); color: #fff; border-bottom-right-radius: 5px; }
-  .msg.bot { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; box-shadow: var(--shadow-sm); }
-  .msg.bot code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 4px; font-size: .9em; }
-
-  .tools { align-self: flex-start; display: flex; flex-wrap: wrap; gap: .3rem; margin-left: 2.15rem; }
-  .tool { font-size: .76rem; color: #5a6480; background: #fff; border: 1px solid var(--line); border-radius: 999px;
-          padding: .28rem .7rem; display: inline-flex; align-items: center; gap: .45rem; box-shadow: var(--shadow-sm); }
-  .tool .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid #d5dbe8; border-top-color: var(--navy); animation: sp .7s linear infinite; }
-  .tool.ok .spin { border: none; width: auto; height: auto; animation: none; }
-  .tool.ok .spin::after { content: "✓"; color: #16a34a; font-weight: 700; }
-  .tool.fail .spin { border: none; animation: none; }
-  .tool.fail .spin::after { content: "✕"; color: #dc2626; font-weight: 700; }
-  @keyframes sp { to { transform: rotate(360deg); } }
-
-  .empty { margin: auto 0; text-align: center; padding: 0 .5rem; }
-  .empty .big { font-size: 1.18rem; font-weight: 650; letter-spacing: -.015em; margin-bottom: .3rem; }
-  .empty .lead { color: var(--muted); font-size: .89rem; margin-bottom: 1.15rem; }
-  .sug { display: inline-block; margin: .22rem; padding: .45rem .85rem; border: 1px solid var(--line);
-         border-radius: 999px; cursor: pointer; background: #fff; font-size: .84rem; color: #55607d;
-         box-shadow: var(--shadow-sm); transition: border-color .15s, color .15s; }
-  .sug:hover { border-color: #aab4cf; color: var(--ink); }
-
-  form#send { display: flex; gap: .5rem; align-items: center; padding: .85rem 1.15rem;
-              border-top: 1px solid var(--line); background: #fff; }
-  form#send input { flex: 1; border-radius: 999px; padding: .7rem 1.05rem; font-size: .93rem; background: var(--bg); }
-  form#send input:focus { background: #fff; }
-  form#send button { width: 38px; height: 38px; flex: none; margin: 0; padding: 0; border-radius: 50%;
-                     display: grid; place-items: center; font-size: 1.1rem; line-height: 1; }
-
-  /* ── Gráficos ────────────────────────────────────────────────────────── */
-  .chart { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 1.05rem 1.1rem;
-           box-shadow: var(--shadow-sm); animation: rise .22s ease both; }
-  .chart h3 { font-size: .93rem; font-weight: 620; margin-bottom: .2rem; letter-spacing: -.01em; }
-  .chart .meta { font-size: .74rem; color: var(--muted); margin-bottom: .85rem; }
-  .chart .warn { color: #92400e; background: #fef3c7; border-radius: 6px; padding: .3rem .55rem; display: inline-block; }
-  .chart .box { position: relative; height: 265px; }
-
-  /* Controles del gráfico. Sin esto un gráfico es una foto muerta: lo mirás y
-     no podés preguntarle nada más. Con esto se puede recortar el período y
-     cambiar la forma sin volver a pasar por el modelo — y sin gastar tokens. */
-  .chart .ctl { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
-                margin-top: .8rem; padding-top: .75rem; border-top: 1px solid var(--line); }
-  .chart .ctl .sep { width: 1px; height: 16px; background: var(--line); margin: 0 .25rem; }
-  .chart.busy { opacity: .55; pointer-events: none; }
+  
+  /* ── Página de la empresa ────────────────────────────────────────────────
+     Todo lo de abajo NO es parte del producto: simula el sitio donde el widget
+     va embebido, para poder probar la integración completa. */
+  #panel { display: none; max-width: 940px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+  .topbar { display: flex; align-items: center; gap: .7rem; padding: .9rem 0 1.2rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
+  .topbar .logo { width: 32px; height: 32px; border-radius: 9px; background: linear-gradient(135deg, #3b466f, #262e4a); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: .85rem; }
+  .topbar .nom { font-weight: 660; }
+  .topbar .quien { margin-left: auto; font-size: .8rem; color: var(--muted); }
+  .nota { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1.4rem; font-size: .86rem; color: #55607d; line-height: 1.6; }
+  .nota b { color: var(--ink); }
+  .nota code { background: #f1f5f9; padding: .08rem .32rem; border-radius: 4px; font-size: .93em; }
+  #marco { width: 100%; height: 620px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: block; box-shadow: 0 1px 2px rgba(28,33,53,.05); }
 </style>
 </head>
 <body>
@@ -155,53 +71,52 @@
   </div>
 </div>
 
-<div id="app">
-  <header>
-    <div class="mark">D</div>
-    <div class="ident">
-      <span class="name">Diagnóstica</span>
-      <span class="status"><i class="live"></i><span id="mode"></span></span>
-    </div>
-  </header>
 
-  <div id="summary">
-    <div class="head">
-      <span class="t">Resumen</span>
-      <button type="button" class="ghost" data-days="30">30 días</button>
-      <button type="button" class="ghost" data-days="90">90 días</button>
-      <button type="button" class="ghost" data-days="365">12 meses</button>
-      <span class="rng" id="summaryRange"></span>
-    </div>
-    <div class="kpis" id="kpis"></div>
+<div id="panel">
+  <div class="topbar">
+    <div class="logo">D</div>
+    <span class="nom">Diagnóstica</span>
+    <span class="quien" id="quien"></span>
   </div>
 
-  <div id="log">
-    <div class="empty" id="empty">
-      <div class="big">¿Qué querés saber?</div>
-      <div class="lead">Preguntá en lenguaje natural. Si pedís un gráfico, lo dibuja.</div>
-      <span class="sug">¿Bajaron las sesiones respecto del año pasado?</span>
-      <span class="sug">Gráfico de atenciones por médico</span>
-      <span class="sug">¿Qué especialidad tiene más videoconsultas?</span>
-      <span class="sug">Mostrame la evolución de las sesiones mes a mes</span>
-      <span class="sug">¿Cuántos turnos se cancelaron?</span>
-    </div>
+  <div class="nota">
+    <b>Esto simula el sitio de la empresa.</b> El asistente de abajo está embebido
+    en un <code>&lt;iframe&gt;</code>: esta página se logueó contra su propio backend y le
+    pasa el token al widget por <code>postMessage</code>. El widget nunca pide
+    credenciales y el backend del chat nunca ve una contraseña.
   </div>
-  <form id="send">
-    <input id="q" placeholder="Escribí tu pregunta…" autocomplete="off">
-    <button type="submit" id="sendBtn" aria-label="Enviar" title="Enviar">↑</button>
-  </form>
+
+  <iframe id="marco" src="/widget" title="Asistente de datos"></iframe>
 </div>
 
-<script src="/vendor/chart.umd.js"></script>
 <script>
-let TOKEN = null, BRAND = null, CFG = null;
-const history = [];
-
+let CFG = null, TOKEN = null, BRAND = null;
 const $ = (id) => document.getElementById(id);
-
-// La config se carga al abrir la página: hace falta saber dónde está el backend
-// de la empresa antes de poder loguearse contra él.
 const ready = fetch("/config").then(r => r.json()).then(c => { CFG = c; });
+
+// El token se guarda hasta que el widget avise que está escuchando. Si lo
+// mandáramos apenas termina el login, el iframe podría no haber cargado todavía
+// y el mensaje se perdería sin dejar rastro.
+let pendiente = null;
+let widgetListo = false;
+
+// A dónde se le permite mandar el token. Es el origen del propio iframe, no "*".
+// Con "*" el navegador entrega el mensaje a cualquier origen que haya terminado
+// cargado ahí — y eso que viaja adentro es la sesión del usuario.
+const destino = new URL($("marco").src, location.href).origin;
+
+function mandarToken() {
+  if (!widgetListo || !pendiente) return;
+  $("marco").contentWindow.postMessage({ type: "diagnostica-auth", ...pendiente }, destino);
+}
+
+window.addEventListener("message", (e) => {
+  if (e.origin !== destino) return;
+  if (e.data?.type === "diagnostica-ready") { widgetListo = true; mandarToken(); }
+  if (e.data?.type === "diagnostica-resize" && e.data.height > 200) {
+    $("marco").style.height = Math.min(e.data.height, 900) + "px";
+  }
+});
 
 // ── Login ────────────────────────────────────────────────────────────────────
 // Esto es lo que hace la página de la empresa: llamar a SU PROPIO backend.
@@ -231,11 +146,13 @@ $("loginForm").addEventListener("submit", async (e) => {
     TOKEN = d.token;
     BRAND = CFG.demo.brandId;
 
+    // Acá termina el trabajo de la página de la empresa: tiene el token y se lo
+    // entrega al widget. No sabe nada más de lo que el widget hace con él.
     $("login").style.display = "none";
-    $("app").style.display = "flex";
-    $("q").focus();
-    $("mode").textContent = CFG.agentMode === "real" ? CFG.model : "modo stub (sin API key)";
-    loadSummary(30);
+    $("panel").style.display = "block";
+    $("quien").textContent = $("email").value;
+    pendiente = { token: TOKEN, brandId: BRAND };
+    mandarToken();
   } catch (err) {
     const msg = err instanceof TypeError
       ? "No se pudo contactar al backend de la empresa. ¿Está levantado?"
@@ -252,319 +169,7 @@ $("loginForm").addEventListener("submit", async (e) => {
 
 const PALETTE = ["#313a5c", "#7c86b8", "#a3adcf", "#4f5b8c", "#c7cde3", "#606d9e", "#8e98c4"];
 
-// ── Resumen del período ──────────────────────────────────────────────────────
-// No pasa por el modelo: son count_* con fechas, que el backend responde con un
-// número exacto. Por eso además no sufre el problema de la muestra truncada que
-// sí tienen los gráficos.
 
-const iso = (d) => d.toISOString().slice(0, 10);
-const fmtDate = (s) => new Date(s + "T00:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
-
-async function loadSummary(days) {
-  for (const b of document.querySelectorAll("#summary .ghost")) {
-    b.classList.toggle("on", Number(b.dataset.days) === days);
-  }
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 86400000);
-  $("summaryNone")?.remove();
-  $("kpis").innerHTML = "";
-  $("summaryRange").textContent = "Cargando…";
-
-  try {
-    const r = await fetch("/summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
-      body: JSON.stringify({ brandId: BRAND, from: iso(from), to: iso(to) }),
-    });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    renderSummary(d);
-  } catch (err) {
-    $("summaryRange").textContent = "";
-    $("kpis").innerHTML = '<div class="none">No se pudo cargar el resumen: ' + err.message + "</div>";
-  }
-}
-
-function renderSummary(d) {
-  $("summaryRange").textContent =
-    fmtDate(d.from) + " – " + fmtDate(d.to) + "  ·  contra " + fmtDate(d.prevFrom) + " – " + fmtDate(d.prevTo);
-
-  const box = $("kpis");
-  box.innerHTML = "";
-  for (const m of d.metrics) {
-    const el = document.createElement("div");
-    el.className = "kpi" + (m.error ? " err" : "");
-
-    const k = document.createElement("div"); k.className = "k"; k.textContent = m.label;
-    const v = document.createElement("div"); v.className = "v";
-    el.append(k, v);
-
-    if (m.error) {
-      v.textContent = "no disponible";
-      el.title = m.error;
-    } else {
-      v.textContent = m.value;
-      const delta = document.createElement("div");
-      delta.className = "d";
-      // Sin base no hay porcentaje posible: 0 → 5 no es "+∞%", es "antes 0".
-      if (m.previous === 0) {
-        delta.textContent = m.value === 0 ? "sin datos en ningún período" : "antes 0";
-      } else {
-        const pct = Math.round(((m.value - m.previous) / m.previous) * 100);
-        delta.className = "d " + (pct > 0 ? "up" : pct < 0 ? "down" : "");
-        delta.textContent = (pct > 0 ? "▲ +" : pct < 0 ? "▼ " : "= ") + pct + "% vs anterior";
-      }
-      el.appendChild(delta);
-    }
-    box.appendChild(el);
-  }
-
-  // Un panel con todo en cero se lee como "no pasa nada". Casi siempre es que
-  // el período elegido no toca los datos, no que no haya actividad.
-  if (d.metrics.every((m) => m.value === 0)) {
-    const n = document.createElement("div");
-    n.id = "summaryNone";
-    n.className = "none";
-    n.textContent = "No hay actividad en este período. Probá con un rango más amplio.";
-    box.after(n);
-  }
-}
-
-for (const b of document.querySelectorAll("#summary .ghost")) {
-  b.onclick = () => loadSummary(Number(b.dataset.days));
-}
-
-// Rearma un gráfico ya dibujado con otros parámetros. Va contra /chart, que es
-// el mismo motor que usa el modelo — pero sin modelo de por medio, así que
-// cambiar el período o el tipo es instantáneo y no gasta un solo token.
-async function recharter(card, d, cambios) {
-  card.classList.add("busy");
-  try {
-    const r = await fetch("/chart", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
-      body: JSON.stringify({
-        brandId: BRAND,
-        source: d.source, group_by: d.group_by, type: d.type, title: d.title,
-        from: d.from, to: d.to,
-        ...cambios,
-      }),
-    });
-    const nuevo = await r.json();
-    if (nuevo.error) throw new Error(nuevo.error);
-    drawChart(nuevo, card);   // drawChart ya se encarga de ponerlo en el lugar de `card`
-  } catch (err) {
-    card.classList.remove("busy");
-    addMsg("bot", "No se pudo actualizar el gráfico: " + err.message);
-  }
-}
-
-function periodControls(card, d) {
-  const ctl = document.createElement("div");
-  ctl.className = "ctl";
-
-  const chip = (texto, onClick, activo) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ghost" + (activo ? " on" : "");
-    b.textContent = texto;
-    b.onclick = onClick;
-    ctl.appendChild(b);
-    return b;
-  };
-
-  const hoy = new Date();
-  const desde = (dias) => iso(new Date(hoy.getTime() - dias * 86400000));
-
-  for (const [texto, dias] of [["30 d", 30], ["90 d", 90], ["12 m", 365]]) {
-    chip(texto, () => recharter(card, d, { from: desde(dias), to: iso(hoy) }), d.from === desde(dias));
-  }
-  chip("Todo", () => recharter(card, d, { from: undefined, to: undefined }), !d.from && !d.to);
-
-  const sep = document.createElement("span");
-  sep.className = "sep";
-  ctl.appendChild(sep);
-
-  for (const [texto, tipo] of [["Barras", "bar"], ["Torta", "doughnut"], ["Línea", "line"]]) {
-    chip(texto, () => recharter(card, d, { type: tipo }), d.type === tipo);
-  }
-
-  return ctl;
-}
-
-function drawChart(d, reemplazando) {
-  const card = document.createElement("div");
-  card.className = "chart";
-
-  const h = document.createElement("h3");
-  h.textContent = d.title;
-
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  // Si el backend tiene más filas de las que trajimos, el gráfico es una
-  // muestra. Decirlo importa: un gráfico parcial presentado como total es
-  // exactamente el tipo de error que nadie detecta mirándolo.
-  if (d.truncated) {
-    const w = document.createElement("span");
-    w.className = "warn";
-    w.textContent = "Muestra de " + d.counted + " sobre " + d.total + " registros";
-    meta.appendChild(w);
-  } else {
-    meta.textContent = d.counted + " registros";
-  }
-
-  const box = document.createElement("div");
-  box.className = "box";
-  const canvas = document.createElement("canvas");
-  box.appendChild(canvas);
-
-  card.append(h, meta, box, periodControls(card, d));
-
-  // Al rearmar, el que llama decide dónde va: reemplaza a la tarjeta vieja en
-  // su lugar, en vez de agregar una nueva al final del hilo.
-  if (reemplazando) reemplazando.replaceWith(card);
-  else $("log").appendChild(card);
-
-  new Chart(canvas, {
-    type: d.type,
-    data: {
-      labels: d.labels,
-      datasets: [{
-        label: d.title,
-        data: d.values,
-        backgroundColor: d.type === "line" ? "rgba(49,58,92,.1)" : d.labels.map((_, i) => PALETTE[i % PALETTE.length]),
-        borderColor: "#313a5c",
-        borderWidth: d.type === "line" ? 2 : 0,
-        fill: d.type === "line",
-        tension: .3,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: d.type === "doughnut", position: "right" } },
-      scales: d.type === "doughnut" ? {} : { y: { beginAtZero: true, ticks: { precision: 0 } } },
-    },
-  });
-
-  // Al reemplazar no se hace scroll: el usuario está mirando ese gráfico y
-  // saltar al final del hilo lo sacaría de donde estaba.
-  if (!reemplazando) $("log").scrollTop = $("log").scrollHeight;
-  return card;
-}
-
-// ── Chat ─────────────────────────────────────────────────────────────────────
-document.addEventListener("click", (e) => {
-  if (e.target.classList.contains("sug")) {
-    $("q").value = e.target.textContent;
-    $("send").requestSubmit();
-  }
-});
-
-function addMsg(cls, text) {
-  const d = document.createElement("div");
-  d.className = "msg " + cls;
-  d.textContent = text;
-
-  // La burbuja va dentro de una fila. El avatar es un hermano, no un hijo:
-  // el streaming pisa el textContent de la burbuja en cada token, y si el
-  // avatar viviera adentro se borraría en el primero.
-  const row = document.createElement("div");
-  row.className = "row " + cls;
-  if (cls === "bot") {
-    const av = document.createElement("div");
-    av.className = "av";
-    row.appendChild(av);
-  }
-  row.appendChild(d);
-
-  $("log").appendChild(row);
-  $("log").scrollTop = $("log").scrollHeight;
-  return d;
-}
-
-$("send").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const q = $("q").value.trim();
-  if (!q) return;
-  if ($("empty")) $("empty").remove();
-
-  $("q").value = "";
-  $("sendBtn").disabled = true;
-  addMsg("user", q);
-  history.push({ role: "user", content: q });
-
-  const toolBox = document.createElement("div");
-  toolBox.className = "tools";
-  $("log").appendChild(toolBox);
-  const chips = {};
-
-  // `acc` es el texto de la burbuja actual; `full` es todo lo que dijo el
-  // modelo en este turno. Se separan porque un gráfico corta la burbuja al
-  // medio, y el historial tiene que quedarse con la respuesta entera.
-  let bot = null, acc = "", full = "";
-
-  try {
-    const res = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
-      body: JSON.stringify({ brandId: BRAND, messages: history }),
-    });
-    if (!res.ok) throw new Error((await res.json()).error || "Error del servidor");
-
-    // SSE por POST: se lee el body a mano (EventSource solo soporta GET).
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop();
-
-      for (const p of parts) {
-        if (!p.startsWith("data: ")) continue;
-        const ev = JSON.parse(p.slice(6));
-
-        if (ev.type === "text") {
-          if (!bot) bot = addMsg("bot", "");
-          acc += ev.text;
-          full += ev.text;
-          bot.textContent = acc;
-          $("log").scrollTop = $("log").scrollHeight;
-        } else if (ev.type === "tool_start") {
-          const c = document.createElement("div");
-          c.className = "tool";
-          c.innerHTML = '<span class="spin"></span>' + ev.name;
-          chips[ev.name] = c;
-          toolBox.appendChild(c);
-          $("log").scrollTop = $("log").scrollHeight;
-        } else if (ev.type === "tool_end") {
-          if (chips[ev.name]) chips[ev.name].className = "tool " + (ev.ok ? "ok" : "fail");
-        } else if (ev.type === "chart") {
-          // El gráfico llega ya armado desde el backend. El modelo eligió qué
-          // graficar, pero los números no pasaron por él.
-          drawChart(ev.chart);
-          // El texto que venga después va en una burbuja nueva, debajo del
-          // gráfico, y no pegado al que había antes.
-          bot = null; acc = "";
-        } else if (ev.type === "error") {
-          addMsg("bot", "⚠ " + ev.message);
-        }
-      }
-    }
-
-    if (full) history.push({ role: "assistant", content: full });
-  } catch (err) {
-    addMsg("bot", "⚠ " + err.message);
-  } finally {
-    if (!toolBox.children.length) toolBox.remove();
-    $("sendBtn").disabled = false;
-    $("q").focus();
-  }
-});
 </script>
 </body>
 </html>

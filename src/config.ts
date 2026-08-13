@@ -34,6 +34,22 @@ export const AGENT_MODE: "real" | "stub" =
 // deje la request colgada indefinidamente.
 export const MAX_TOOL_ITERATIONS = parseInt(process.env.CHAT_MAX_ITERATIONS ?? "8");
 
+// Tope de requests por minuto y por usuario. 0 o negativo = sin límite.
+//
+// Separados porque el costo es distinto: un mensaje de chat es una llamada paga
+// a la API de Claude, mientras que el resumen y los gráficos solo pegan al MCP.
+export const RATE_CHAT_PER_MIN = parseInt(process.env.CHAT_RATE_CHAT_PER_MIN ?? "15");
+export const RATE_DATA_PER_MIN = parseInt(process.env.CHAT_RATE_DATA_PER_MIN ?? "60");
+
+// Orígenes que pueden embeber el widget y mandarle el token del usuario.
+// Vacío = cualquiera, que sirve para desarrollo pero NO para producción: el
+// token del usuario viaja por postMessage y sin allowlist se le entrega a
+// cualquier página que logre embeber el iframe.
+export const ALLOWED_ORIGINS: string[] = (process.env.CHAT_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 // Whitelist de tools que el chat puede usar, separadas por coma. Vacío = todas.
 //
 // Va por configuración y no hardcodeada a propósito: los nombres de las tools

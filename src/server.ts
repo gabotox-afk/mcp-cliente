@@ -1,7 +1,8 @@
 import { join } from "path";
 import { runAgent, type ChatEvent, type ChatMessage } from "./agent.ts";
 import { buildChart, buildSummary } from "./charts.ts";
-import { PORT, MCP_BASE_URL, DEMO_BACKEND_URL, DEMO_BRAND_ID, AGENT_MODE, MODEL } from "./config.ts";
+import { checkRateLimit } from "./rate-limit.ts";
+import { PORT, MCP_BASE_URL, DEMO_BACKEND_URL, DEMO_BRAND_ID, AGENT_MODE, MODEL, ALLOWED_ORIGINS } from "./config.ts";
 
 // Backend del chat. Es la única pieza que hospedamos nosotros y la única que
 // tiene la API key de Anthropic — por eso el chat no puede ser solo frontend.
@@ -13,24 +14,47 @@ import { PORT, MCP_BASE_URL, DEMO_BACKEND_URL, DEMO_BRAND_ID, AGENT_MODE, MODEL 
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
 
-// En producción esto tiene que ser una allowlist de los dominios donde se
-// embebe el chat, no "*".
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
+// Con CHAT_ALLOWED_ORIGINS seteado se devuelve el origen que pidió, si está en
+// la lista. Sin la variable cae a "*", que sirve para desarrollo y no para
+// producción.
+function corsFor(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin") ?? "";
+  const permitido =
+    ALLOWED_ORIGINS.length === 0 ? "*" : ALLOWED_ORIGINS.includes(origin) ? origin : "null";
+  return {
+    "Access-Control-Allow-Origin": permitido,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    ...(ALLOWED_ORIGINS.length > 0 ? { Vary: "Origin" } : {}),
+  };
+}
 
 function bearer(req: Request): string {
   const auth = req.headers.get("authorization") ?? "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
 
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...CORS },
-  });
+function jsonFor(req: Request) {
+  return (data: unknown, status = 200) =>
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { "Content-Type": "application/json", ...corsFor(req) },
+    });
+}
+
+// 429 con Retry-After, que es lo que un cliente necesita para reintentar bien.
+function tooMany(req: Request, retryAfter: number) {
+  return new Response(
+    JSON.stringify({ error: `Demasiadas consultas. Probá de nuevo en ${retryAfter} segundos.` }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfter),
+        ...corsFor(req),
+      },
+    },
+  );
 }
 
 Bun.serve({
@@ -39,8 +63,9 @@ Bun.serve({
 
   async fetch(req) {
     const url = new URL(req.url);
+    const json = jsonFor(req);
 
-    if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+    if (req.method === "OPTIONS") return new Response(null, { headers: corsFor(req) });
 
     // ── Config pública ───────────────────────────────────────────────────────
     // El bloque `demo` le dice a la página de prueba dónde está el backend de
@@ -54,6 +79,8 @@ Bun.serve({
         agentMode: AGENT_MODE,
         model: MODEL,
         mcp: MCP_BASE_URL,
+        // El widget usa esto para descartar mensajes de orígenes ajenos.
+        allowedOrigins: ALLOWED_ORIGINS,
         demo: { backendUrl: DEMO_BACKEND_URL, brandId: DEMO_BRAND_ID },
       });
     }
@@ -81,6 +108,9 @@ Bun.serve({
       const token = bearer(req);
       if (!token) return json({ error: "Falta el token del usuario." }, 401);
 
+      const rl = checkRateLimit("datos", token);
+      if (!rl.allowed) return tooMany(req, rl.retryAfter ?? 60);
+
       const body = (await req.json().catch(() => ({}))) as Record<string, string | undefined>;
       if (!body.brandId) return json({ error: "Falta brandId." }, 400);
 
@@ -95,6 +125,9 @@ Bun.serve({
     if (url.pathname === "/summary" && req.method === "POST") {
       const token = bearer(req);
       if (!token) return json({ error: "Falta el token del usuario." }, 401);
+
+      const rl = checkRateLimit("datos", token);
+      if (!rl.allowed) return tooMany(req, rl.retryAfter ?? 60);
 
       const body = (await req.json().catch(() => ({}))) as {
         brandId?: string; from?: string; to?: string;
@@ -113,6 +146,10 @@ Bun.serve({
     if (url.pathname === "/chat" && req.method === "POST") {
       const token = bearer(req);
       if (!token) return json({ error: "Falta el token del usuario." }, 401);
+
+      // Este es el carril caro: cada mensaje es una llamada paga a la API.
+      const rl = checkRateLimit("chat", token);
+      if (!rl.allowed) return tooMany(req, rl.retryAfter ?? 60);
 
       const body = (await req.json()) as { brandId?: string; messages?: ChatMessage[] };
       const brandId = body.brandId;
@@ -146,7 +183,22 @@ Bun.serve({
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
-          ...CORS,
+          ...corsFor(req),
+        },
+      });
+    }
+
+    // ── Widget embebible ─────────────────────────────────────────────────────
+    // Es lo que va dentro del <iframe> en la página de la empresa. El
+    // frame-ancestors dice quién tiene permitido embeberlo: sin eso, cualquier
+    // sitio puede montar el widget y quedarse esperando un token.
+    if (url.pathname === "/widget") {
+      const file = Bun.file(join(PUBLIC_DIR, "widget.html"));
+      const ancestors = ALLOWED_ORIGINS.length > 0 ? ALLOWED_ORIGINS.join(" ") : "*";
+      return new Response(file, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Security-Policy": `frame-ancestors 'self' ${ancestors}`,
         },
       });
     }
