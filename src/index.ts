@@ -5,9 +5,10 @@ import { checkRateLimit } from "./rateLimit.ts";
 const PORT             = parseInt(process.env.PORT ?? "5000");
 const MOCK_SERVER_URL  = process.env.MOCK_SERVER_URL ?? "http://localhost:4000";
 const DEFAULT_BRAND_ID = process.env.DEFAULT_BRAND_ID ?? "diagnostica";
+const PARENT_ORIGIN = process.env.PARENT_ORIGIN ?? `http://localhost:${PORT}`;
 
 const DEMO_HOST_HTML = await Bun.file(new URL("../public/demo-host.html", import.meta.url)).text();
-const WIDGET_HTML     = await Bun.file(new URL("../public/widget.html", import.meta.url)).text();
+const WIDGET_HTML     = (await Bun.file(new URL("../public/widget.html", import.meta.url)).text()).replaceAll("__PARENT_ORIGIN__", PARENT_ORIGIN);
 
 function extractToken(req: Request): string | null {
   const auth = req.headers.get("authorization") ?? "";

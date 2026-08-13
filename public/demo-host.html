@@ -58,6 +58,7 @@
   const errEl = document.getElementById("err");
   const widgetWrap = document.getElementById("widget-wrap");
   const iframe = document.getElementById("widget-frame");
+  const widgetOrigin = new URL(iframe.src, window.location.href).origin;
   const whoami = document.getElementById("whoami");
 
   let pendingAuth = null;
@@ -66,8 +67,9 @@
   // También ajustamos el alto del iframe al contenido real que reporta el widget,
   // en vez de dejarlo con una altura fija.
   window.addEventListener("message", (event) => {
+    if(event.origin !== widgetOrigin) return;
     if (event.data?.type === "diagnostica-widget-ready" && pendingAuth) {
-      iframe.contentWindow.postMessage({ type: "diagnostica-auth", ...pendingAuth }, "*");
+      iframe.contentWindow.postMessage({ type: "diagnostica-auth", ...pendingAuth }, widgetOrigin);
     }
     if (event.data?.type === "diagnostica-widget-resize") {
       iframe.style.height = `${event.data.height}px`;
@@ -98,7 +100,7 @@
     widgetWrap.style.display = "block";
 
     // Si el iframe ya estaba cargado y listo antes del login, mandamos el token ahora.
-    iframe.contentWindow.postMessage({ type: "diagnostica-auth", ...pendingAuth }, "*");
+    iframe.contentWindow.postMessage({ type: "diagnostica-auth", ...pendingAuth }, widgetOrigin);
   });
 </script>
 </body>

@@ -50,6 +50,7 @@
 
 <script>
   let token = null;
+  const PARENT_ORIGIN = "__PARENT_ORIGIN__";
   let brandId = null;
   let sessionExpired= false;
   const history = [];
@@ -84,6 +85,7 @@
   // En producción, validar event.origin contra el dominio real de Diagnostica
   // antes de aceptar el mensaje -- acá se omite porque todo corre en localhost.
   window.addEventListener("message", (event) => {
+    if (event.origin !== PARENT_ORIGIN) return;    
     if (event.data?.type !== "diagnostica-auth") return;
     token = event.data.token;
     brandId = event.data.brandId;
@@ -95,7 +97,7 @@
 
   // Avisa al padre que ya está listo para recibir el token (evita la carrera
   // donde el padre manda el postMessage antes de que este listener exista).
-  window.parent.postMessage({ type: "diagnostica-widget-ready" }, "*");
+  window.parent.postMessage({ type: "diagnostica-widget-ready" }, PARENT_ORIGIN);
 
   // El panel ya no scrollea internamente con altura fija -- crece con el contenido,
   // y le avisa al padre cuánto mide para que ajuste el <iframe> en consecuencia.
@@ -104,7 +106,7 @@
     const height = document.body.scrollHeight;
     if (height === lastReportedHeight) return;
     lastReportedHeight = height;
-    window.parent.postMessage({ type: "diagnostica-widget-resize", height }, "*");
+    window.parent.postMessage({ type: "diagnostica-widget-resize", height }, PARENT_ORIGIN);
   }
   new ResizeObserver(reportHeight).observe(document.body);
 
