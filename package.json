@@ -1,0 +1,16 @@
+{
+  "name": "diagnostica-widget",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}
