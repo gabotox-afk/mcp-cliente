@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { listTools, callTool, type AnthropicTool, type McpSession } from "./mcp-client.ts";
+import { listTools, callTool, SessionExpiredError, type AnthropicTool, type McpSession } from "./mcp-client.ts";
 import { buildChart, type ChartData } from "./charts.ts";
 import { ANTHROPIC_API_KEY, MODEL, EFFORT, SUPPORTS_EFFORT, AGENT_MODE, MAX_TOOL_ITERATIONS } from "./config.ts";
 
@@ -9,6 +9,7 @@ export type ChatEvent =
   | { type: "tool_start"; name: string; input: Record<string, unknown> }
   | { type: "tool_end";   name: string; ok: boolean }
   | { type: "chart";      chart: ChartData }
+  | { type: "session_expired" }
   | { type: "done" }
   | { type: "error";      message: string };
 
@@ -359,6 +360,13 @@ export async function runAgent(session: McpSession, history: ChatMessage[], emit
     else await runStub(session, history, emit);
     emit({ type: "done" });
   } catch (err) {
+    // La sesión vencida no es "un error del chat": no hay nada que reintentar y
+    // el usuario no puede hacer nada desde acá. Va como evento propio para que
+    // el front avise claro en vez de mostrar un mensaje técnico.
+    if (err instanceof SessionExpiredError) {
+      emit({ type: "session_expired" });
+      return;
+    }
     emit({ type: "error", message: err instanceof Error ? err.message : String(err) });
   }
 }

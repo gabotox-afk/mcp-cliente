@@ -1,4 +1,4 @@
-import { callTool, type McpSession } from "./mcp-client.ts";
+import { callTool, SessionExpiredError, type McpSession } from "./mcp-client.ts";
 
 // Dos cosas viven acá:
 //
@@ -288,8 +288,14 @@ export async function buildSummary(
         ]);
         return { key: m.key, label: m.label, value, previous };
       } catch (err) {
-        // Una métrica que falla no debería vaciar el panel entero: puede estar
-        // fuera de CHAT_ALLOWED_TOOLS, o no existir en otro MCP.
+        // La sesión vencida sí corta todo: si el token no sirve, no sirve para
+        // ninguna métrica, y mostrar cinco "no disponible" haría creer que el
+        // problema es de los datos y no de la sesión.
+        if (err instanceof SessionExpiredError) throw err;
+
+        // Cualquier otro fallo de una métrica no debería vaciar el panel
+        // entero: puede estar fuera de CHAT_ALLOWED_TOOLS, o no existir en otro
+        // MCP.
         return {
           key: m.key,
           label: m.label,

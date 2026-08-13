@@ -1,6 +1,7 @@
 import { join } from "path";
 import { runAgent, type ChatEvent, type ChatMessage } from "./agent.ts";
 import { buildChart, buildSummary } from "./charts.ts";
+import { SessionExpiredError } from "./mcp-client.ts";
 import { checkRateLimit } from "./rate-limit.ts";
 import { PORT, MCP_BASE_URL, DEMO_BACKEND_URL, DEMO_BRAND_ID, AGENT_MODE, MODEL, ALLOWED_ORIGINS } from "./config.ts";
 
@@ -118,6 +119,9 @@ Bun.serve({
         const { brandId, ...spec } = body;
         return json(await buildChart({ brandId, token }, spec as never));
       } catch (err) {
+        // Un token vencido es 401, no 502: el front lo distingue para pedir que
+        // se vuelva a entrar en vez de mostrarlo como una falla del servicio.
+        if (err instanceof SessionExpiredError) return json({ error: err.message, sessionExpired: true }, 401);
         return json({ error: err instanceof Error ? err.message : String(err) }, 502);
       }
     }
@@ -138,6 +142,9 @@ Bun.serve({
       try {
         return json(await buildSummary({ brandId: body.brandId, token }, body.from, body.to));
       } catch (err) {
+        // Un token vencido es 401, no 502: el front lo distingue para pedir que
+        // se vuelva a entrar en vez de mostrarlo como una falla del servicio.
+        if (err instanceof SessionExpiredError) return json({ error: err.message, sessionExpired: true }, 401);
         return json({ error: err instanceof Error ? err.message : String(err) }, 502);
       }
     }

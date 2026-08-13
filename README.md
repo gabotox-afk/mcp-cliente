@@ -77,6 +77,46 @@ Dos cosas que no son opcionales:
 El widget también reporta su alto por `postMessage`, para que el host pueda
 ajustar el iframe en vez de dejar una barra de scroll anidada.
 
+## Sesión vencida
+
+El token del usuario lo emite el backend de la empresa y vence. Cuando eso pasa
+a mitad de una conversación, el chat corta el loop, no le pasa nada al modelo, y
+muestra un aviso claro: *"Tu sesión expiró. Volvé a entrar para seguir
+consultando."*
+
+Sin esto, un token vencido llegaba al modelo como un resultado de error
+cualquiera y el modelo improvisaba una explicación — se paga esa respuesta y no
+le dice al usuario lo único que necesita saber.
+
+El fallo de auth llega por **dos caminos distintos** y hay que cubrir los dos:
+
+- El MCP rechaza la conexión (falta el header). El transporte lanza una
+  excepción con el status en `code`.
+- El MCP acepta, consulta al backend, y es el **backend** el que responde 401 —
+  token vencido, que es el caso real. Ahí no hay excepción: el MCP devuelve un
+  resultado de tool con `isError` y el status viaja adentro del texto.
+
+Para el segundo se busca el status con su palabra (`HTTP 401`,
+`401 Unauthorized`) y solo sobre resultados ya marcados como error. Un `401`
+suelto no alcanza: un dato que contenga ese número no debería cerrarle la sesión
+a nadie.
+
+El widget no puede renovar el token —la sesión es del host, no suya— así que le
+avisa por `postMessage`. En un producto real el host renueva con su refresh
+token y le manda el nuevo sin que el usuario haga nada.
+
+## Historial de la conversación
+
+Se guarda en `sessionStorage`, así una recarga no borra el hilo.
+
+`sessionStorage` y no `localStorage` a propósito: esto guarda datos de
+pacientes, y `sessionStorage` muere al cerrar la pestaña mientras que
+`localStorage` queda en el disco de una máquina que puede ser compartida. La
+clave incluye la marca, y el hilo se borra cuando la sesión vence.
+
+Los gráficos no se restauran: sus datos podrían haber cambiado desde entonces, y
+mostrar uno viejo como si fuera de ahora es peor que no mostrarlo.
+
 ## Tope de consultas
 
 `CHAT_RATE_CHAT_PER_MIN` (15) y `CHAT_RATE_DATA_PER_MIN` (60), por usuario.

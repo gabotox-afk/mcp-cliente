@@ -114,6 +114,17 @@
   .chart .ctl .sep { width: 1px; height: 16px; background: var(--line); margin: 0 .25rem; }
   .chart.busy { opacity: .55; pointer-events: none; }
 
+  /* Aviso de sesión vencida. Ocupa el lugar del compositor porque a partir de
+     ahí no hay nada que escribir: cualquier consulta va a fallar igual. */
+  #vencida { display: none; align-items: center; gap: .6rem; padding: .85rem 1.15rem;
+             border-top: 1px solid #fcd34d; background: #fffbeb; color: #92400e; font-size: .87rem; }
+  #vencida.on { display: flex; }
+  #vencida .ico { width: 22px; height: 22px; border-radius: 50%; flex: none; display: grid; place-items: center;
+                  background: #fde68a; color: #92400e; font-weight: 700; font-size: .75rem; }
+  #vencida button { width: auto; margin: 0; padding: .42rem .8rem; font-size: .8rem; font-weight: 600;
+                    border-radius: 8px; background: #92400e; margin-left: auto; flex: none; }
+  #vencida button:hover { background: #78350f; }
+
   /* Embebido: el widget llena exactamente el iframe que le dan.
      Es 100% y no 100vh a propósito. Con 100vh el alto del widget depende del
      alto del iframe, y si además le reportáramos ese alto al host para que lo
@@ -163,6 +174,12 @@
       <span class="sug">¿Cuántos turnos se cancelaron?</span>
     </div>
   </div>
+  <div id="vencida">
+    <span class="ico">!</span>
+    <span>Tu sesión expiró. Volvé a entrar para seguir consultando.</span>
+    <button type="button" id="reentrar">Volver a entrar</button>
+  </div>
+
   <form id="send">
     <input id="q" placeholder="Escribí tu pregunta…" autocomplete="off">
     <button type="submit" id="sendBtn" aria-label="Enviar" title="Enviar">↑</button>
@@ -179,7 +196,38 @@
 // página rompe al widget.
 
 let TOKEN = null, BRAND = null, CFG = null;
-const history = [];
+let history = [];
+
+// ── Persistencia del hilo ────────────────────────────────────────────────────
+// sessionStorage y no localStorage a propósito: esto guarda datos de pacientes,
+// y sessionStorage muere cuando se cierra la pestaña. localStorage quedaría en
+// el disco de una máquina que puede ser compartida.
+//
+// La clave incluye la marca: dos marcas distintas en la misma pestaña no deben
+// verse la conversación entre ellas.
+const claveHilo = () => "diagnostica-chat:" + BRAND;
+
+function guardarHilo() {
+  try { sessionStorage.setItem(claveHilo(), JSON.stringify(history)); } catch {}
+}
+
+function olvidarHilo() {
+  try { sessionStorage.removeItem(claveHilo()); } catch {}
+  history = [];
+}
+
+// Redibuja lo que había antes de recargar. Los gráficos no se restauran: sus
+// datos podrían haber cambiado desde entonces, y mostrar un gráfico viejo como
+// si fuera de ahora es peor que no mostrarlo.
+function restaurarHilo() {
+  let guardado;
+  try { guardado = JSON.parse(sessionStorage.getItem(claveHilo()) ?? "[]"); } catch { return; }
+  if (!Array.isArray(guardado) || guardado.length === 0) return;
+
+  history = guardado;
+  $("empty")?.remove();
+  for (const m of history) addMsg(m.role === "user" ? "user" : "bot", m.content);
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -213,10 +261,16 @@ window.addEventListener("message", async (e) => {
 });
 
 function arrancar() {
+  if (vencida) {
+    vencida = false;
+    $("vencida").classList.remove("on");
+    $("send").style.display = "flex";
+  }
   $("espera").style.display = "none";
   $("app").style.display = "flex";
   $("mode").textContent = CFG.agentMode === "real" ? CFG.model : "modo stub (sin API key)";
   $("q").focus();
+  restaurarHilo();
   loadSummary(30);
 }
 
@@ -249,6 +303,7 @@ async function loadSummary(days) {
       body: JSON.stringify({ brandId: BRAND, from: iso(from), to: iso(to) }),
     });
     const d = await r.json();
+    if (d.sessionExpired) { sesionVencida(); return; }
     if (d.error) throw new Error(d.error);
     renderSummary(d);
   } catch (err) {
@@ -323,6 +378,7 @@ async function recharter(card, d, cambios) {
       }),
     });
     const nuevo = await r.json();
+    if (nuevo.sessionExpired) { sesionVencida(); return; }
     if (nuevo.error) throw new Error(nuevo.error);
     drawChart(nuevo, card);   // drawChart ya se encarga de ponerlo en el lugar de `card`
   } catch (err) {
@@ -425,6 +481,33 @@ function drawChart(d, reemplazando) {
   return card;
 }
 
+// ── Sesión vencida ───────────────────────────────────────────────────────────
+// El widget no puede renovar el token: la sesión es del host, no suya. Lo único
+// que corresponde es dejar de aceptar consultas, decirlo claro, y avisarle al
+// host — que sí puede reautenticar sin que el usuario recargue nada.
+
+let vencida = false;
+
+function sesionVencida() {
+  if (vencida) return;
+  vencida = true;
+
+  $("send").style.display = "none";
+  $("vencida").classList.add("on");
+
+  // El hilo se borra: quedaría en la pestaña con datos de pacientes de una
+  // sesión que ya no está autorizada.
+  olvidarHilo();
+
+  parent.postMessage({ type: "diagnostica-session-expired" }, "*");
+}
+
+// Si el host manda un token nuevo, el widget vuelve solo. Esto lo cubre el
+// mismo handler de "diagnostica-auth" de arriba.
+$("reentrar").addEventListener("click", () => {
+  parent.postMessage({ type: "diagnostica-reauth" }, "*");
+});
+
 // ── Chat ─────────────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
   if (e.target.classList.contains("sug")) {
@@ -522,6 +605,8 @@ $("send").addEventListener("submit", async (e) => {
           // El texto que venga después va en una burbuja nueva, debajo del
           // gráfico, y no pegado al que había antes.
           bot = null; acc = "";
+        } else if (ev.type === "session_expired") {
+          sesionVencida();
         } else if (ev.type === "error") {
           addMsg("bot", "⚠ " + ev.message);
         }
@@ -529,6 +614,7 @@ $("send").addEventListener("submit", async (e) => {
     }
 
     if (full) history.push({ role: "assistant", content: full });
+    guardarHilo();
   } catch (err) {
     addMsg("bot", "⚠ " + err.message);
   } finally {

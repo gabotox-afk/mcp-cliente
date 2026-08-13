@@ -80,6 +80,7 @@
     <div class="logo">D</div>
     <span class="nom">Diagnóstica</span>
     <span class="quien" id="quien"></span>
+    <span class="quien" id="aviso" style="margin-left:.6rem;color:#b45309"></span>
   </div>
 
   <div class="nota">
@@ -116,6 +117,23 @@ function mandarToken() {
 window.addEventListener("message", (e) => {
   if (e.origin !== destino) return;
   if (e.data?.type === "diagnostica-ready") { widgetListo = true; mandarToken(); }
+
+  // El widget avisa que el token que le dimos ya no sirve. En un producto real
+  // acá la página renueva la sesión con su refresh token y le manda el nuevo
+  // sin que el usuario haga nada. En esta demo, que no tiene refresh, se vuelve
+  // al login.
+  if (e.data?.type === "diagnostica-session-expired") {
+    pendiente = null;
+    $("aviso").textContent = "La sesión expiró.";
+  }
+  if (e.data?.type === "diagnostica-reauth") {
+    $("panel").style.display = "none";
+    $("login").style.display = "flex";
+    $("loginBtn").disabled = false;
+    $("loginBtn").textContent = "Ingresar";
+    $("pass").value = "";
+    $("pass").focus();
+  }
 });
 
 // ── Login ────────────────────────────────────────────────────────────────────
@@ -151,6 +169,7 @@ $("loginForm").addEventListener("submit", async (e) => {
     $("login").style.display = "none";
     $("panel").style.display = "block";
     $("quien").textContent = $("email").value;
+    $("aviso").textContent = "";
     pendiente = { token: TOKEN, brandId: BRAND };
     mandarToken();
   } catch (err) {

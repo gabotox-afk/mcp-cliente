@@ -34,6 +34,47 @@ export type McpSession = {
   token: string;
 };
 
+// El token del usuario venció o dejó de ser válido.
+//
+// Se distingue de cualquier otro fallo porque la reacción es distinta: no hay
+// nada que reintentar ni que explicarle al modelo, hay que pedirle al usuario
+// que vuelva a entrar. Sin esta distinción, un token vencido llega al modelo
+// como un resultado de error cualquiera y el modelo improvisa una respuesta
+// —cara, y que no le dice al usuario lo único que necesita saber.
+export class SessionExpiredError extends Error {
+  constructor(message = "La sesión del usuario expiró.") {
+    super(message);
+    this.name = "SessionExpiredError";
+  }
+}
+
+// El fallo de auth llega por dos caminos distintos, y hay que cubrir los dos.
+//
+// 1. El MCP rechaza la conexión (falta el header, por ejemplo). Ahí el
+//    transporte lanza una excepción con el status HTTP en `code`.
+function esFalloDeAuth(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  return code === 401 || code === 403;
+}
+
+// 2. El MCP acepta la request, se la pasa al backend de la empresa, y es el
+//    BACKEND el que responde 401 — token vencido, típicamente. Ahí el MCP
+//    devuelve un resultado de tool normal, con isError, y el status viaja
+//    adentro del texto. No hay excepción y `code` nunca aparece.
+//
+//    Este es el caso real de una sesión que expira mientras alguien usa el
+//    chat, así que es el que más importa.
+//
+//    Se busca el status con su palabra ("HTTP 401", "401 Unauthorized") y no un
+//    "401" suelto: un resultado que traiga ese número entre los datos no debería
+//    hacernos cerrar la sesión de nadie. Y solo se evalúa sobre resultados que
+//    ya vinieron marcados como error.
+const PATRON_AUTH = /\bHTTP (401|403)\b|\b401 Unauthorized\b|\b403 Forbidden\b/i;
+
+function resultadoEsFalloDeAuth(res: { text: string; isError: boolean }): boolean {
+  return res.isError && PATRON_AUTH.test(res.text);
+}
+
 function mcpUrlFor(brandId: string): URL {
   return new URL(`${MCP_BASE_URL}/${brandId}/mcp`);
 }
@@ -57,9 +98,12 @@ async function withMcp<T>(session: McpSession, fn: (client: Client) => Promise<T
     },
   });
 
-  await client.connect(transport);
   try {
+    await client.connect(transport);
     return await fn(client);
+  } catch (err) {
+    if (esFalloDeAuth(err)) throw new SessionExpiredError();
+    throw err;
   } finally {
     await client.close().catch(() => {});
   }
@@ -150,11 +194,21 @@ export async function callTool(
         .map((b: any) => (b?.type === "text" ? b.text : JSON.stringify(b)))
         .join("\n");
 
-      return { text: text || "(sin contenido)", isError: Boolean(res.isError) };
+      const resultado = { text: text || "(sin contenido)", isError: Boolean(res.isError) };
+      if (resultadoEsFalloDeAuth(resultado)) throw new SessionExpiredError();
+      return resultado;
     });
   } catch (err) {
-    // Un fallo de tool no debe tumbar la conversación: se lo devolvemos al
-    // modelo como resultado de error para que pueda reaccionar.
+    // La sesión vencida sí tumba la conversación, a propósito: es la única
+    // excepción que se propaga en vez de volver como resultado de error.
+    //
+    // Se chequean las dos formas: withMcp ya la convirtió si el fallo fue de la
+    // conexión, pero un 401 que aparezca recién al ejecutar la tool llega crudo.
+    if (err instanceof SessionExpiredError) throw err;
+    if (esFalloDeAuth(err)) throw new SessionExpiredError();
+
+    // El resto de los fallos no deben tumbarla: se le devuelven al modelo como
+    // resultado de error para que pueda reaccionar.
     return {
       text: `Error al ejecutar ${name}: ${err instanceof Error ? err.message : String(err)}`,
       isError: true,
