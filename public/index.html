@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnóstica — panel</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #313a5c; --navy-hover: #262e4a; --panel: #1a2140;
+    --line: #e6e9f2; --muted: #8b94ab; --ink: #1c2135;
+    --bg: #f5f6fa;
+    --shadow-sm: 0 1px 2px rgba(28,33,53,.05);
+    --shadow-md: 0 8px 24px -6px rgba(28,33,53,.14), 0 2px 6px rgba(28,33,53,.06);
+  }
+  html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; }
+  body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+  /* ── Login ───────────────────────────────────────────────────────────── */
+  #login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+  .card { width: 100%; max-width: 380px; }
+  .card h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: .3rem; }
+  .card .sub { color: var(--muted); margin-bottom: 2rem; font-size: .95rem; }
+  label { display: block; font-size: .85rem; font-weight: 500; color: #475569; margin: 1.1rem 0 .35rem; }
+  input { width: 100%; padding: .75rem .9rem; border: 1.5px solid var(--line); border-radius: 9px; font-size: 1rem; outline: none; background: #fff; }
+  input:focus { border-color: #47517a; }
+  button { width: 100%; margin-top: 1.6rem; padding: .85rem; background: var(--navy); color: #fff; border: none; border-radius: 999px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--navy-hover); }
+  button:disabled { background: var(--muted); cursor: not-allowed; }
+  .err { margin-top: 1rem; padding: .7rem .85rem; border-radius: 8px; background: #fee2e2; color: #991b1b; font-size: .9rem; }
+  .hint { margin-top: 1.5rem; font-size: .8rem; color: var(--muted); line-height: 1.6; }
+  .hint code { background: #f1f5f9; color: #475569; padding: .05rem .3rem; border-radius: 4px; font-size: .95em; }
+
+  
+  /* ── Página de la empresa ────────────────────────────────────────────────
+     Todo lo de abajo NO es parte del producto: simula el sitio donde el widget
+     va embebido, para poder probar la integración completa. */
+  #panel { display: none; max-width: 940px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+  .topbar { display: flex; align-items: center; gap: .7rem; padding: .9rem 0 1.2rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
+  .topbar .logo { width: 32px; height: 32px; border-radius: 9px; background: linear-gradient(135deg, #3b466f, #262e4a); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: .85rem; }
+  .topbar .nom { font-weight: 660; }
+  .topbar .quien { margin-left: auto; font-size: .8rem; color: var(--muted); }
+  .nota { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1.4rem; font-size: .86rem; color: #55607d; line-height: 1.6; }
+  .nota b { color: var(--ink); }
+  .nota code { background: #f1f5f9; padding: .08rem .32rem; border-radius: 4px; font-size: .93em; }
+  /* El alto del iframe lo decide el host, no el widget. Un chat que crece con
+     el contenido se estira sin fin; este es un panel fijo con scroll adentro. */
+  #marco { width: 100%; height: min(680px, 80vh); border: 1px solid var(--line); border-radius: 14px;
+           background: #fff; display: block; box-shadow: 0 1px 2px rgba(28,33,53,.05); }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="card">
+    <h1>Diagnóstica</h1>
+    <div class="sub">Ingresá para acceder al panel</div>
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" type="email" required placeholder="usuario@empresa.com" autocomplete="email">
+      <label for="pass">Contraseña</label>
+      <input id="pass" type="password" required placeholder="••••••••" autocomplete="current-password">
+      <button type="submit" id="loginBtn">Ingresar</button>
+    </form>
+    <div id="loginErr"></div>
+    <div class="hint">
+      Este login simula el de la página de la empresa. El chat no pide
+      credenciales propias — reutiliza el token de esta sesión.
+      <br><br>
+      Usuarios del backend de prueba: <code>admin@diagnostica.com</code>,
+      <code>medico@diagnostica.com</code> o <code>admin2@diagnostica.com</code>,
+      todos con contraseña <code>1234</code>.
+    </div>
+  </div>
+</div>
+
+
+<div id="panel">
+  <div class="topbar">
+    <div class="logo">D</div>
+    <span class="nom">Diagnóstica</span>
+    <span class="quien" id="quien"></span>
+  </div>
+
+  <div class="nota">
+    <b>Esto simula el sitio de la empresa.</b> El asistente de abajo está embebido
+    en un <code>&lt;iframe&gt;</code>: esta página se logueó contra su propio backend y le
+    pasa el token al widget por <code>postMessage</code>. El widget nunca pide
+    credenciales y el backend del chat nunca ve una contraseña.
+  </div>
+
+  <iframe id="marco" src="/widget" title="Asistente de datos"></iframe>
+</div>
+
+<script>
+let CFG = null, TOKEN = null, BRAND = null;
+const $ = (id) => document.getElementById(id);
+const ready = fetch("/config").then(r => r.json()).then(c => { CFG = c; });
+
+// El token se guarda hasta que el widget avise que está escuchando. Si lo
+// mandáramos apenas termina el login, el iframe podría no haber cargado todavía
+// y el mensaje se perdería sin dejar rastro.
+let pendiente = null;
+let widgetListo = false;
+
+// A dónde se le permite mandar el token. Es el origen del propio iframe, no "*".
+// Con "*" el navegador entrega el mensaje a cualquier origen que haya terminado
+// cargado ahí — y eso que viaja adentro es la sesión del usuario.
+const destino = new URL($("marco").src, location.href).origin;
+
+function mandarToken() {
+  if (!widgetListo || !pendiente) return;
+  $("marco").contentWindow.postMessage({ type: "diagnostica-auth", ...pendiente }, destino);
+}
+
+window.addEventListener("message", (e) => {
+  if (e.origin !== destino) return;
+  if (e.data?.type === "diagnostica-ready") { widgetListo = true; mandarToken(); }
+});
+
+// ── Login ────────────────────────────────────────────────────────────────────
+// Esto es lo que hace la página de la empresa: llamar a SU PROPIO backend.
+// El chat-backend no participa y nunca ve la contraseña — solo recibe después
+// el token ya emitido. Por eso no existe ningún /login en el chat.
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginBtn").disabled = true;
+  $("loginBtn").textContent = "Ingresando…";
+  $("loginErr").innerHTML = "";
+  try {
+    await ready;
+
+    const r = await fetch(CFG.demo.backendUrl + "/users/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: $("email").value,
+        password: $("pass").value,
+        brandId: CFG.demo.brandId,
+      }),
+    });
+    const d = await r.json();
+    // El backend responde 200 con success:false cuando las credenciales fallan.
+    if (!d.success || !d.token) throw new Error(d.message || "Credenciales inválidas.");
+
+    TOKEN = d.token;
+    BRAND = CFG.demo.brandId;
+
+    // Acá termina el trabajo de la página de la empresa: tiene el token y se lo
+    // entrega al widget. No sabe nada más de lo que el widget hace con él.
+    $("login").style.display = "none";
+    $("panel").style.display = "block";
+    $("quien").textContent = $("email").value;
+    pendiente = { token: TOKEN, brandId: BRAND };
+    mandarToken();
+  } catch (err) {
+    const msg = err instanceof TypeError
+      ? "No se pudo contactar al backend de la empresa. ¿Está levantado?"
+      : err.message;
+    $("loginErr").innerHTML = '<div class="err">' + msg + "</div>";
+    $("loginBtn").disabled = false;
+    $("loginBtn").textContent = "Ingresar";
+  }
+});
+
+// ── Gráficos predeterminados ─────────────────────────────────────────────────
+// Estos NO pasan por el modelo: el backend consulta el MCP y agrupa. Por eso
+// son instantáneos, siempre dan lo mismo y no gastan tokens.
+
+const PALETTE = ["#313a5c", "#7c86b8", "#a3adcf", "#4f5b8c", "#c7cde3", "#606d9e", "#8e98c4"];
+
+
+</script>
+</body>
+</html>

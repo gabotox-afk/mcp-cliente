@@ -1,3 +1,8 @@
-node_modules/
+# NUNCA subir: tiene la API key de Anthropic
 .env
-bun.lock
+
+node_modules/
+
+# Archivos de prueba temporales
+bench-tmp.ts
+*.tmp.ts
