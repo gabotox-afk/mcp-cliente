@@ -114,9 +114,18 @@
   .chart .ctl .sep { width: 1px; height: 16px; background: var(--line); margin: 0 .25rem; }
   .chart.busy { opacity: .55; pointer-events: none; }
 
-  /* Embebido: el widget ocupa el alto que le dé el host, no la ventana. */
-  #app { display: flex; height: 100vh; max-width: none; border: none; }
-  #espera { display: grid; place-items: center; height: 100vh; color: var(--muted); font-size: .88rem; }
+  /* Embebido: el widget llena exactamente el iframe que le dan.
+     Es 100% y no 100vh a propósito. Con 100vh el alto del widget depende del
+     alto del iframe, y si además le reportáramos ese alto al host para que lo
+     ajuste, quedaría un lazo: el host achica, el widget achica, el host vuelve a
+     achicar. Acá el host manda y el widget obedece. */
+  html, body { height: 100%; overflow: hidden; }
+  #app { display: flex; height: 100%; max-width: none; border: none; }
+  /* min-height:0 es lo que le permite a #log achicarse por debajo de su
+     contenido. Sin eso un hijo flex con scroll propio no se achica: empuja el
+     alto del panel y termina apareciendo una segunda barra, la de afuera. */
+  #log { min-height: 0; }
+  #espera { display: grid; place-items: center; height: 100%; color: var(--muted); font-size: .88rem; }
 </style>
 </head>
 <body>
@@ -211,13 +220,9 @@ function arrancar() {
   loadSummary(30);
 }
 
-// El host no sabe cuánto mide el contenido del iframe. Se lo avisamos para que
-// pueda ajustar el alto en vez de dejar una barra de scroll anidada.
-function avisarAlto() {
-  const alto = document.documentElement.scrollHeight;
-  parent.postMessage({ type: "diagnostica-resize", height: alto }, "*");
-}
-new ResizeObserver(avisarAlto).observe(document.documentElement);
+// No se le reporta el alto al host. Un chat no debe crecer con el contenido:
+// se estiraría sin fin a medida que se acumulan mensajes. El alto lo fija el
+// host y el log scrollea adentro, que es como funciona cualquier chat embebido.
 
 // ── Resumen del período ──────────────────────────────────────────────────────
 // No pasa por el modelo: son count_* con fechas, que el backend responde con un
