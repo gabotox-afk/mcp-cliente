@@ -20,7 +20,21 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 // debe saber del dominio. Deliberadamente NO enumera tools — el modelo las ve
 // en el catálogo que le pasamos, así que este prompt sirve igual para
 // cualquier MCP.
-const SYSTEM_PROMPT = `Sos un asistente de analítica que responde preguntas consultando las herramientas disponibles.
+//
+// Lleva la fecha de hoy. Sin eso, un asistente de analítica no puede responder
+// nada relativo al tiempo: "el año pasado" o "el último trimestre" no tienen
+// referencia y el modelo termina inventando un año.
+//
+// La fecha va con precisión de día, así que el prefijo cacheado cambia una vez
+// por día y no una vez por request. Es la única parte variable admisible acá:
+// meterle el nombre del usuario o la hora exacta rompería el cache de verdad.
+// Se calcula por request y no al importar el módulo porque el server queda
+// levantado varios días y la fecha se quedaría vieja.
+function systemPrompt(): string {
+  const hoy = new Date().toISOString().slice(0, 10);
+  return `Sos un asistente de analítica que responde preguntas consultando las herramientas disponibles.
+
+Hoy es ${hoy}. Usalo para resolver cualquier referencia temporal relativa ("este año", "el mes pasado", "los últimos 6 meses") antes de armar los filtros de fecha.
 
 Reglas:
 - Respondé SIEMPRE en base a lo que devuelven las herramientas. Nunca inventes cifras ni completes datos que no obtuviste.
@@ -31,6 +45,7 @@ Reglas:
 - Si el pedido admite una lectura razonable, resolvelo con esa lectura y aclarala al responder. No pidas permiso ni aclaraciones para algo que podés asumir: el usuario corrige si no era lo que quería, y pedirle que reformule le cuesta más que ver un resultado y ajustarlo. Preguntá solo si hay dos lecturas muy distintas y elegir mal lo mandaría para cualquier lado.
 - Si no te dan un rango de fechas, usá todos los datos disponibles. No pidas fechas.
 - Antes de decir que un dato no existe, fijate en lo que devuelven las herramientas. Los campos interesantes suelen venir anidados: el profesional de una atención está en professional.name, no en un campo suelto.`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tools locales: las resuelve este backend, no el MCP.
@@ -72,6 +87,14 @@ const LOCAL_TOOLS: AnthropicTool[] = [
           type: "string",
           enum: ["bar", "doughnut", "line"],
           description: "Tipo de gráfico. 'doughnut' para torta, 'line' para evolución en el tiempo.",
+        },
+        bucket: {
+          type: "string",
+          enum: ["day", "month"],
+          description:
+            "Solo cuando agrupás por una fecha: si cada punto es un día o un mes. Usá 'month' para " +
+            "rangos largos — un punto por día sobre dos años son cientos de puntos ilegibles. " +
+            "Por defecto agrupa por día.",
         },
         title: { type: "string", description: "Título del gráfico, en castellano." },
         from: { type: "string", description: "Fecha de inicio ISO (opcional)." },
@@ -188,7 +211,7 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
       // fecha, el nombre del usuario o cualquier cosa variable, cada request
       // pasa a tener su propio prefijo y el cache deja de servir.
       system: [
-        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+        { type: "text", text: systemPrompt(), cache_control: { type: "ephemeral" } },
       ],
       // NO desactivar el thinking en Opus 5 / Sonnet 5: con thinking apagado el
       // modelo a veces escribe la llamada a la tool como texto en vez de emitir

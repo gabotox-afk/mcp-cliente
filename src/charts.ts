@@ -20,11 +20,15 @@ export type ChartType = "bar" | "doughnut" | "line";
 // Todo lo necesario para reconstruir el gráfico. Viaja de vuelta al front con
 // los datos justamente para eso: sin el spec, un gráfico es una foto muerta y
 // no se puede cambiar el período ni el tipo sin volver a preguntar.
+export type Bucket = "day" | "month";
+
 export type ChartSpec = {
   source: string;
   group_by: string;
   type: ChartType;
   title: string;
+  /** Solo cuando se agrupa por una fecha: si cada punto es un día o un mes. */
+  bucket?: Bucket;
   from?: string;
   to?: string;
 };
@@ -81,9 +85,12 @@ function paths(value: unknown, prefix = ""): string[] {
   return out;
 }
 
-function dayOf(value: unknown): string | null {
+// Un punto por día sobre dos años son 700 puntos ilegibles. Por mes son 24.
+// Cuál corresponde depende de la pregunta, así que lo elige quien la hace.
+function fechaEn(value: unknown, bucket: Bucket): string | null {
   const d = new Date(String(value));
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, bucket === "month" ? 7 : 10);
 }
 
 export type ChartRequest = {
@@ -91,6 +98,7 @@ export type ChartRequest = {
   group_by: string;
   type?: ChartType;
   title?: string;
+  bucket?: Bucket;
   from?: string;
   to?: string;
 };
@@ -106,8 +114,9 @@ export async function buildChart(session: McpSession, req: ChartRequest): Promis
     );
   }
 
-  const byDay = /date|fecha|_at$/i.test(req.group_by);
-  const type: ChartType = req.type ?? (byDay ? "line" : "bar");
+  const esFecha = /date|fecha|_at$/i.test(req.group_by);
+  const bucket: Bucket = req.bucket === "month" ? "month" : "day";
+  const type: ChartType = req.type ?? (esFecha ? "line" : "bar");
   const title = req.title?.trim() || `${req.source.replace(/^list_/, "")} por ${req.group_by}`;
 
   const res = await callTool(session, req.source, {
@@ -152,7 +161,7 @@ export async function buildChart(session: McpSession, req: ChartRequest): Promis
       missing++;
       continue;
     }
-    const key = byDay ? dayOf(raw) : String(raw);
+    const key = esFecha ? fechaEn(raw, bucket) : String(raw);
     if (key === null) {
       missing++;
       continue;
@@ -181,7 +190,7 @@ export async function buildChart(session: McpSession, req: ChartRequest): Promis
   }
 
   const entries = [...tally.entries()].sort(
-    byDay
+    esFecha
       ? (a, b) => a[0].localeCompare(b[0])   // cronológico
       : (a, b) => b[1] - a[1],              // de mayor a menor
   );
@@ -191,6 +200,7 @@ export async function buildChart(session: McpSession, req: ChartRequest): Promis
     group_by: req.group_by,
     type,
     title,
+    ...(esFecha ? { bucket } : {}),
     from: req.from,
     to: req.to,
     labels: entries.map(([k]) => k),
