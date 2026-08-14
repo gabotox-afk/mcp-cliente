@@ -6,8 +6,12 @@ import { ANTHROPIC_API_KEY, MODEL, EFFORT, SUPPORTS_EFFORT, AGENT_MODE, MAX_TOOL
 // Eventos que el agente le va emitiendo al front. El server los serializa a SSE.
 export type ChatEvent =
   | { type: "text";       text: string }
-  | { type: "tool_start"; name: string; input: Record<string, unknown> }
-  | { type: "tool_end";   name: string; ok: boolean }
+  // `id` identifica la llamada concreta, no la herramienta. El modelo puede
+  // llamar la misma tool dos veces en un turno ("compará 2025 contra 2026" hace
+  // dos count_sessions); indexando por nombre, la segunda pisaba a la primera y
+  // esa quedaba marcada como "en curso" para siempre.
+  | { type: "tool_start"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_end";   id: string; name: string; ok: boolean }
   | { type: "chart";      chart: ChartData }
   | { type: "session_expired" }
   | { type: "done" }
@@ -216,9 +220,10 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit, 
       // todos los usuarios y todas las conversaciones: lo escribe el primero que
       // pregunta y lo leen todos los demás a ~10% del precio.
       //
-      // Por eso el system prompt tiene que ser una constante: si se le mete la
-      // fecha, el nombre del usuario o cualquier cosa variable, cada request
-      // pasa a tener su propio prefijo y el cache deja de servir.
+      // Lo único variable que admite es la fecha de hoy: cambia una vez por día,
+      // así que el cache se rehace una vez por día y no una vez por request.
+      // Meterle el nombre del usuario o la hora exacta sí lo rompería — cada
+      // request tendría su propio prefijo y no habría nada que reusar.
       system: [
         { type: "text", text: systemPrompt(), cache_control: { type: "ephemeral" } },
       ],
@@ -271,11 +276,11 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit, 
     const results = await Promise.all(
       toolUses.map(async (tu) => {
         const input = (tu.input ?? {}) as Record<string, unknown>;
-        emit({ type: "tool_start", name: tu.name, input });
+        emit({ type: "tool_start", id: tu.id, name: tu.name, input });
         const r = LOCAL_TOOL_NAMES.has(tu.name)
           ? await callLocalTool(session, tu.name, input, emit)
           : await callTool(session, tu.name, input);
-        emit({ type: "tool_end", name: tu.name, ok: !r.isError });
+        emit({ type: "tool_end", id: tu.id, name: tu.name, ok: !r.isError });
         return {
           type: "tool_result" as const,
           tool_use_id: tu.id,
@@ -337,7 +342,7 @@ function pickTool(question: string, tools: { name: string; description: string }
   return best?.tool ?? null;
 }
 
-async function runStub(session: McpSession, history: ChatMessage[], emit: Emit): Promise<void> {
+async function runStub(session: McpSession, history: ChatMessage[], emit: Emit, signal?: AbortSignal): Promise<void> {
   const question = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
   const tools = await listTools(session);
 
@@ -355,9 +360,11 @@ async function runStub(session: McpSession, history: ChatMessage[], emit: Emit):
     return;
   }
 
-  emit({ type: "tool_start", name: tool.name, input: {} });
+  if (signal?.aborted) return;
+
+  emit({ type: "tool_start", id: "stub-1", name: tool.name, input: {} });
   const result = await callTool(session, tool.name, {});
-  emit({ type: "tool_end", name: tool.name, ok: !result.isError });
+  emit({ type: "tool_end", id: "stub-1", name: tool.name, ok: !result.isError });
 
   emit({ type: "text", text: `Ejecuté \`${tool.name}\` y el MCP devolvió:\n\n${result.text}` });
 }
@@ -372,7 +379,7 @@ export async function runAgent(
 ): Promise<void> {
   try {
     if (AGENT_MODE === "real") await runReal(session, history, emit, signal);
-    else await runStub(session, history, emit);
+    else await runStub(session, history, emit, signal);
     emit({ type: "done" });
   } catch (err) {
     // Cancelar es lo que el usuario pidió, no una falla: se sale en silencio.

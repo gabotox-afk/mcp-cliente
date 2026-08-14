@@ -1,7 +1,34 @@
 // Configuración del chat backend. Todo por variables de entorno: el chat no
 // sabe nada del MCP concreto al que se conecta, solo de su URL.
 
-export const PORT = parseInt(process.env.CHAT_PORT ?? "3002");
+// Lee una variable numérica, avisando fuerte si no lo es.
+//
+// parseInt("ocho") devuelve NaN, y NaN se propaga sin hacer ruido hasta romper
+// algo lejos de la causa. Dos casos reales que esto evita:
+//
+//   CHAT_MAX_ITERATIONS  -> `i < NaN` es falso, el loop de tools no da ninguna
+//                           vuelta y TODA consulta responde "necesitó demasiadas
+//                           vueltas" sin haber llamado nunca al modelo.
+//   CHAT_RATE_*_PER_MIN  -> `count >= NaN` es falso siempre: el tope queda
+//                           desactivado y nadie se entera hasta la factura.
+//
+// Se usa el default en vez de abortar: un typo en una variable secundaria no
+// debería impedir que el server arranque. Pero el aviso tiene que verse.
+function numero(nombre: string, porDefecto: number): number {
+  const crudo = process.env[nombre];
+  if (crudo === undefined || crudo.trim() === "") return porDefecto;
+
+  const n = Number(crudo);
+  if (!Number.isFinite(n)) {
+    process.stderr.write(
+      `[chat] AVISO: ${nombre}="${crudo}" no es un número. Se usa ${porDefecto}.\n`,
+    );
+    return porDefecto;
+  }
+  return Math.trunc(n);
+}
+
+export const PORT = numero("CHAT_PORT", 3002);
 
 // URL base del MCP server. El brandId se agrega por request, porque cada
 // usuario puede pertenecer a una marca distinta.
@@ -32,14 +59,14 @@ export const AGENT_MODE: "real" | "stub" =
 
 // Tope de vueltas del loop de tools, para que un modelo que se enrosque no
 // deje la request colgada indefinidamente.
-export const MAX_TOOL_ITERATIONS = parseInt(process.env.CHAT_MAX_ITERATIONS ?? "8");
+export const MAX_TOOL_ITERATIONS = numero("CHAT_MAX_ITERATIONS", 8);
 
 // Tope de requests por minuto y por usuario. 0 o negativo = sin límite.
 //
 // Separados porque el costo es distinto: un mensaje de chat es una llamada paga
 // a la API de Claude, mientras que el resumen y los gráficos solo pegan al MCP.
-export const RATE_CHAT_PER_MIN = parseInt(process.env.CHAT_RATE_CHAT_PER_MIN ?? "15");
-export const RATE_DATA_PER_MIN = parseInt(process.env.CHAT_RATE_DATA_PER_MIN ?? "60");
+export const RATE_CHAT_PER_MIN = numero("CHAT_RATE_CHAT_PER_MIN", 15);
+export const RATE_DATA_PER_MIN = numero("CHAT_RATE_DATA_PER_MIN", 60);
 
 // Orígenes que pueden embeber el widget y mandarle el token del usuario.
 // Vacío = cualquiera, que sirve para desarrollo pero NO para producción: el
