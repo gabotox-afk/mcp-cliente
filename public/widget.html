@@ -420,6 +420,11 @@ function periodControls(card, d) {
   return ctl;
 }
 
+// Colores de las series. Vive acá, junto al único lugar que dibuja: quedó en la
+// página del host cuando partí el front en dos, y como el host no dibuja nada,
+// nadie lo notó hasta que un gráfico intentó pintarse.
+const PALETTE = ["#313a5c", "#7c86b8", "#a3adcf", "#4f5b8c", "#c7cde3", "#606d9e", "#8e98c4"];
+
 function drawChart(d, reemplazando) {
   const card = document.createElement("div");
   card.className = "chart";
