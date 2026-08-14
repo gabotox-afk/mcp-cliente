@@ -35,18 +35,18 @@
   /* ── Página de la empresa ────────────────────────────────────────────────
      Todo lo de abajo NO es parte del producto: simula el sitio donde el widget
      va embebido, para poder probar la integración completa. */
-  #panel { display: none; max-width: 940px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
-  .topbar { display: flex; align-items: center; gap: .7rem; padding: .9rem 0 1.2rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
+  #panel { display: none; max-width: 940px; margin: 0 auto; padding: 1.1rem 1.25rem 1.5rem; }
+  .topbar { display: flex; align-items: center; gap: .7rem; padding: .3rem 0 .9rem; border-bottom: 1px solid var(--line); margin-bottom: 1.1rem; }
   .topbar .logo { width: 32px; height: 32px; border-radius: 9px; background: linear-gradient(135deg, #3b466f, #262e4a); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: .85rem; }
   .topbar .nom { font-weight: 660; }
   .topbar .quien { margin-left: auto; font-size: .8rem; color: var(--muted); }
-  .nota { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1.4rem; font-size: .86rem; color: #55607d; line-height: 1.6; }
-  .nota b { color: var(--ink); }
-  .nota code { background: #f1f5f9; padding: .08rem .32rem; border-radius: 4px; font-size: .93em; }
-  /* El alto del iframe lo decide el host, no el widget. Un chat que crece con
-     el contenido se estira sin fin; este es un panel fijo con scroll adentro. */
-  #marco { width: 100%; height: min(680px, 80vh); border: 1px solid var(--line); border-radius: 14px;
-           background: #fff; display: block; box-shadow: 0 1px 2px rgba(28,33,53,.05); }
+  /* El alto del iframe lo decide el host, no el widget: un chat que crece con
+     su contenido se estiraría sin fin. Se lleva lo que queda de ventana después
+     de la barra de arriba y los márgenes del panel. El calc evita adivinar un
+     valor fijo, que se queda corto en pantallas altas y desborda en las bajas;
+     el min-height es el piso por debajo del cual el chat deja de ser usable. */
+  #marco { width: 100%; height: calc(100vh - 7.25rem); min-height: 460px; border: 1px solid var(--line);
+           border-radius: 14px; background: #fff; display: block; box-shadow: 0 1px 2px rgba(28,33,53,.05); }
 </style>
 </head>
 <body>
@@ -81,13 +81,6 @@
     <span class="nom">Diagnóstica</span>
     <span class="quien" id="quien"></span>
     <span class="quien" id="aviso" style="margin-left:.6rem;color:#b45309"></span>
-  </div>
-
-  <div class="nota">
-    <b>Esto simula el sitio de la empresa.</b> El asistente de abajo está embebido
-    en un <code>&lt;iframe&gt;</code>: esta página se logueó contra su propio backend y le
-    pasa el token al widget por <code>postMessage</code>. El widget nunca pide
-    credenciales y el backend del chat nunca ve una contraseña.
   </div>
 
   <iframe id="marco" src="/widget" title="Asistente de datos"></iframe>
