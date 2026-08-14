@@ -71,7 +71,23 @@
          white-space: pre-wrap; word-break: break-word; }
   .msg.user { background: var(--navy); color: #fff; border-bottom-right-radius: 5px; }
   .msg.bot { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; box-shadow: var(--shadow-sm); }
-  .msg.bot code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 4px; font-size: .9em; }
+
+  /* Burbuja con markdown ya renderizado. El pre-wrap se apaga porque ahora la
+     estructura la dan las etiquetas, no los saltos de línea del texto. */
+  .msg.md { white-space: normal; }
+  .msg.md > :first-child { margin-top: 0; }
+  .msg.md > :last-child  { margin-bottom: 0; }
+  .msg.md p { margin: .5rem 0; }
+  .msg.md h4 { font-size: .95rem; font-weight: 650; margin: .8rem 0 .35rem; letter-spacing: -.01em; }
+  .msg.md ul, .msg.md ol { margin: .5rem 0; padding-left: 1.15rem; }
+  .msg.md li { margin: .22rem 0; }
+  .msg.md strong { font-weight: 650; color: var(--ink); }
+  .msg.md em { font-style: italic; }
+  .msg.md code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 4px; font-size: .88em;
+                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .msg.md pre { background: #f6f8fb; border: 1px solid var(--line); border-radius: 8px;
+                padding: .65rem .8rem; overflow-x: auto; margin: .55rem 0; }
+  .msg.md pre code { background: none; padding: 0; font-size: .84em; }
 
   .tools { align-self: flex-start; display: flex; flex-wrap: wrap; gap: .3rem; margin-left: 2.15rem; }
   .tool { font-size: .76rem; color: #5a6480; background: #fff; border: 1px solid var(--line); border-radius: 999px;
@@ -97,6 +113,12 @@
   form#send input:focus { background: #fff; }
   form#send button { width: 38px; height: 38px; flex: none; margin: 0; padding: 0; border-radius: 50%;
                      display: grid; place-items: center; font-size: 1.1rem; line-height: 1; }
+  /* Mientras responde, el mismo botón pasa a cancelar. Un botón aparte que
+     aparece y desaparece mueve el resto de la barra; este ocupa el mismo lugar. */
+  form#send button.cancelar { background: #b91c1c; font-size: .8rem; }
+  form#send button.cancelar:hover { background: #991b1b; }
+  .cancelado { align-self: flex-start; margin-left: 2.15rem; font-size: .78rem; color: var(--muted);
+               background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: .28rem .75rem; }
 
   /* ── Gráficos ────────────────────────────────────────────────────────── */
   .chart { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 1.05rem 1.1rem;
@@ -420,6 +442,81 @@ function periodControls(card, d) {
   return ctl;
 }
 
+// ── Markdown ─────────────────────────────────────────────────────────────────
+// El modelo responde en markdown: negritas, listas, títulos. Antes se insertaba
+// como texto plano, así que el usuario veía los asteriscos.
+//
+// Se resuelve a mano y no con una librería porque hace falta muy poco, y una
+// dependencia de render que interpreta texto que viene de un modelo es
+// justamente donde no querés sorpresas.
+//
+// El orden importa: primero se escapa TODO el HTML, después se agrega el
+// nuestro. Al revés, cualquier etiqueta que venga en la respuesta —o adentro de
+// un dato del backend, que es texto que nadie controla— se ejecutaría en la
+// página. Por eso tampoco se soportan links ni imágenes: no valen el riesgo.
+function escaparHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function enLinea(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+}
+
+function renderMarkdown(texto) {
+  const lineas = escaparHtml(texto).split("\n");
+  const salida = [];
+  let lista = null;      // "ul" | "ol" | null
+  let enCodigo = false;
+  let parrafo = [];
+
+  const cerrarParrafo = () => {
+    if (parrafo.length) { salida.push("<p>" + enLinea(parrafo.join(" ")) + "</p>"); parrafo = []; }
+  };
+  const cerrarLista = () => { if (lista) { salida.push(`</${lista}>`); lista = null; } };
+
+  for (const linea of lineas) {
+    if (/^```/.test(linea)) {
+      cerrarParrafo(); cerrarLista();
+      salida.push(enCodigo ? "</code></pre>" : "<pre><code>");
+      enCodigo = !enCodigo;
+      continue;
+    }
+    if (enCodigo) { salida.push(linea); continue; }
+
+    if (!linea.trim()) { cerrarParrafo(); cerrarLista(); continue; }
+
+    const titulo = linea.match(/^(#{1,4})\s+(.*)$/);
+    if (titulo) {
+      cerrarParrafo(); cerrarLista();
+      salida.push(`<h4>${enLinea(titulo[2])}</h4>`);
+      continue;
+    }
+
+    const vinieta = linea.match(/^\s*[-*+]\s+(.*)$/);
+    const numerada = linea.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (vinieta || numerada) {
+      cerrarParrafo();
+      const tipo = vinieta ? "ul" : "ol";
+      if (lista !== tipo) { cerrarLista(); salida.push(`<${tipo}>`); lista = tipo; }
+      salida.push(`<li>${enLinea((vinieta ?? numerada)[1])}</li>`);
+      continue;
+    }
+
+    cerrarLista();
+    parrafo.push(linea.trim());
+  }
+
+  cerrarParrafo();
+  cerrarLista();
+  if (enCodigo) salida.push("</code></pre>");
+  return salida.join("");
+}
+
 // Colores de las series. Vive acá, junto al único lugar que dibuja: quedó en la
 // página del host cuando partí el front en dos, y como el host no dibuja nada,
 // nadie lo notó hasta que un gráfico intentó pintarse.
@@ -543,21 +640,60 @@ function addMsg(cls, text) {
   return d;
 }
 
+// Consulta en curso. Sirve para poder abortarla desde el botón.
+let enCurso = null;
+
+// El botón hace dos cosas según el momento. Mientras responde, cancela — y como
+// es type="submit", hay que frenar el envío antes de que el form lo procese.
+$("sendBtn").addEventListener("click", (e) => {
+  if (!enCurso) return;
+  e.preventDefault();
+  enCurso.abort();
+});
+
+function modoEnviar() {
+  $("sendBtn").classList.remove("cancelar");
+  $("sendBtn").textContent = "↑";
+  $("sendBtn").title = "Enviar";
+  $("sendBtn").disabled = false;
+  enCurso = null;
+}
+
+function modoCancelar(control) {
+  enCurso = control;
+  $("sendBtn").classList.add("cancelar");
+  $("sendBtn").textContent = "■";
+  $("sendBtn").title = "Cancelar";
+  $("sendBtn").disabled = false;   // tiene que quedar clickeable para poder frenar
+}
+
 $("send").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (enCurso) return;             // ya hay una consulta corriendo
   const q = $("q").value.trim();
   if (!q) return;
   if ($("empty")) $("empty").remove();
 
   $("q").value = "";
-  $("sendBtn").disabled = true;
+  modoCancelar(new AbortController());
   addMsg("user", q);
   history.push({ role: "user", content: q });
 
-  const toolBox = document.createElement("div");
-  toolBox.className = "tools";
-  $("log").appendChild(toolBox);
+  // El contenedor de chips se crea en el momento en que aparece la primera
+  // tool, no al empezar el turno. Antes se creaba de entrada y quedaba fijo
+  // arriba de todo; ahora que el texto se parte en varias burbujas, cada grupo
+  // de tools tiene que caer en el lugar del hilo donde efectivamente ocurrió.
+  let toolBox = null;
   const chips = {};
+
+  const chipsDe = () => {
+    if (!toolBox) {
+      toolBox = document.createElement("div");
+      toolBox.className = "tools";
+      $("log").appendChild(toolBox);
+    }
+    return toolBox;
+  };
 
   // `acc` es el texto de la burbuja actual; `full` es todo lo que dijo el
   // modelo en este turno. Se separan porque un gráfico corta la burbuja al
@@ -569,6 +705,10 @@ $("send").addEventListener("submit", async (e) => {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
       body: JSON.stringify({ brandId: BRAND, messages: history }),
+      // Abortar cierra la conexión, y el backend lo detecta para cortar el loop
+      // de tools. Sin eso el modelo seguiría trabajando —y cobrando— aunque el
+      // usuario ya no esté esperando la respuesta.
+      signal: enCurso.signal,
     });
     if (!res.ok) throw new Error((await res.json()).error || "Error del servidor");
 
@@ -589,17 +729,29 @@ $("send").addEventListener("submit", async (e) => {
         const ev = JSON.parse(p.slice(6));
 
         if (ev.type === "text") {
-          if (!bot) bot = addMsg("bot", "");
+          if (!bot) {
+            bot = addMsg("bot", "");
+            bot.classList.add("md");
+            // Empieza una burbuja nueva: el grupo de tools anterior ya quedó
+            // atrás, así que el próximo abre su propio contenedor más abajo.
+            toolBox = null;
+          }
           acc += ev.text;
           full += ev.text;
-          bot.textContent = acc;
+          bot.innerHTML = renderMarkdown(acc);
           $("log").scrollTop = $("log").scrollHeight;
         } else if (ev.type === "tool_start") {
+          // Cortar la burbuja acá es el arreglo del segundo bug: el modelo dice
+          // "voy a consultar las sesiones", llama a la tool, y sigue hablando.
+          // Sin este corte los dos tramos quedaban pegados en el mismo párrafo
+          // ("...las sesiones.**Resumen:**") como si fueran una sola frase.
+          bot = null; acc = "";
+
           const c = document.createElement("div");
           c.className = "tool";
           c.innerHTML = '<span class="spin"></span>' + ev.name;
           chips[ev.name] = c;
-          toolBox.appendChild(c);
+          chipsDe().appendChild(c);
           $("log").scrollTop = $("log").scrollHeight;
         } else if (ev.type === "tool_end") {
           if (chips[ev.name]) chips[ev.name].className = "tool " + (ev.ok ? "ok" : "fail");
@@ -621,11 +773,24 @@ $("send").addEventListener("submit", async (e) => {
     if (full) history.push({ role: "assistant", content: full });
     guardarHilo();
   } catch (err) {
-    addMsg("bot", "⚠ " + err.message);
+    // Cancelar no es un error: es lo que el usuario pidió.
+    if (err.name === "AbortError") {
+      const nota = document.createElement("div");
+      nota.className = "cancelado";
+      nota.textContent = "Consulta cancelada";
+      $("log").appendChild(nota);
+      // Lo que alcanzó a decir se guarda igual: quedó en pantalla, y si no
+      // estuviera en el historial la próxima pregunta no tendría ese contexto.
+      if (full) history.push({ role: "assistant", content: full });
+      guardarHilo();
+    } else {
+      addMsg("bot", "⚠ " + err.message);
+    }
   } finally {
-    if (!toolBox.children.length) toolBox.remove();
-    $("sendBtn").disabled = false;
+    if (toolBox && !toolBox.children.length) toolBox.remove();
+    modoEnviar();
     $("q").focus();
+    $("log").scrollTop = $("log").scrollHeight;
   }
 });
 

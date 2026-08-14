@@ -168,7 +168,14 @@ Bun.serve({
       // SSE por POST: EventSource solo hace GET, así que del lado del front se
       // consume con fetch() y un reader del body.
       const encoder = new TextEncoder();
+
+      // Cuando el navegador aborta, el stream se cancela y este controlador
+      // avisa al agente. Sin esto el loop seguiría llamando al modelo y a las
+      // tools contra una conexión que ya nadie está leyendo — se paga igual.
+      const corte = new AbortController();
+
       const stream = new ReadableStream({
+        cancel() { corte.abort(); },
         async start(controller) {
           const emit = (e: ChatEvent) => {
             try {
@@ -178,7 +185,7 @@ Bun.serve({
             }
           };
 
-          await runAgent({ brandId, token }, messages, emit);
+          await runAgent({ brandId, token }, messages, emit, corte.signal);
           try {
             controller.close();
           } catch {}

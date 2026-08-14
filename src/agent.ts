@@ -180,7 +180,7 @@ function logUsage(u: Usage) {
   );
 }
 
-async function runReal(session: McpSession, history: ChatMessage[], emit: Emit): Promise<void> {
+async function runReal(session: McpSession, history: ChatMessage[], emit: Emit, signal?: AbortSignal): Promise<void> {
   const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
   // El catálogo de tools sale del MCP, no está hardcodeado. A eso se le suman
@@ -199,6 +199,11 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
   const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    // Se chequea en cada vuelta y no solo al principio: una consulta que encadena
+    // varias tools puede tardar, y cancelar tiene que frenarla en la vuelta
+    // siguiente en vez de esperar a que termine sola.
+    if (signal?.aborted) { logUsage(usage); return; }
+
     const stream = anthropic.messages.stream({
       model: MODEL,
       max_tokens: 8000,
@@ -228,7 +233,7 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
       // así que marcar el final del último mensaje hace que la vuelta siguiente
       // lea en vez de reprocesar.
       messages: withHistoryBreakpoint(messages),
-    });
+    }, { signal });
 
     // Los tokens de texto se van al front a medida que llegan.
     for await (const event of stream) {
@@ -258,6 +263,8 @@ async function runReal(session: McpSession, history: ChatMessage[], emit: Emit):
     // En paralelo: si el modelo pide varias tools en un mismo turno, no hay
     // razón para serializarlas. Los resultados vuelven todos en un único
     // mensaje de usuario, que es lo que la API espera.
+    if (signal?.aborted) { logUsage(usage); return; }
+
     const results = await Promise.all(
       toolUses.map(async (tu) => {
         const input = (tu.input ?? {}) as Record<string, unknown>;
@@ -354,12 +361,21 @@ async function runStub(session: McpSession, history: ChatMessage[], emit: Emit):
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function runAgent(session: McpSession, history: ChatMessage[], emit: Emit): Promise<void> {
+export async function runAgent(
+  session: McpSession,
+  history: ChatMessage[],
+  emit: Emit,
+  signal?: AbortSignal,
+): Promise<void> {
   try {
-    if (AGENT_MODE === "real") await runReal(session, history, emit);
+    if (AGENT_MODE === "real") await runReal(session, history, emit, signal);
     else await runStub(session, history, emit);
     emit({ type: "done" });
   } catch (err) {
+    // Cancelar es lo que el usuario pidió, no una falla: se sale en silencio.
+    // El front ya sabe que canceló porque fue él quien abortó.
+    if (signal?.aborted || (err as { name?: string })?.name === "AbortError") return;
+
     // La sesión vencida no es "un error del chat": no hay nada que reintentar y
     // el usuario no puede hacer nada desde acá. Va como evento propio para que
     // el front avise claro en vez de mostrar un mensaje técnico.
