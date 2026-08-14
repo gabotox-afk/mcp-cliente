@@ -89,6 +89,15 @@
                 padding: .65rem .8rem; overflow-x: auto; margin: .55rem 0; }
   .msg.md pre code { background: none; padding: 0; font-size: .84em; }
 
+  /* La burbuja es angosta y una tabla con varias columnas no entra. El wrapper
+     scrollea en horizontal en vez de desbordar la burbuja hacia afuera —eso
+     rompería el layout del chat entero, no solo el mensaje. */
+  .msg.md .tabla-wrap { overflow-x: auto; margin: .55rem 0; max-width: 100%; }
+  .msg.md table { border-collapse: collapse; font-size: .87em; white-space: nowrap; }
+  .msg.md th, .msg.md td { padding: .4rem .65rem; border-bottom: 1px solid var(--line); text-align: left; }
+  .msg.md th { font-weight: 650; color: var(--ink); background: #f8fafc; }
+  .msg.md tr:last-child td { border-bottom: none; }
+
   .tools { align-self: flex-start; display: flex; flex-wrap: wrap; gap: .3rem; margin-left: 2.15rem; }
   .tool { font-size: .76rem; color: #5a6480; background: #fff; border: 1px solid var(--line); border-radius: 999px;
           padding: .28rem .7rem; display: inline-flex; align-items: center; gap: .45rem; box-shadow: var(--shadow-sm); }
@@ -467,6 +476,20 @@ function enLinea(s) {
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
 }
 
+// Una fila de tabla GFM: | a | b | c | (con o sin barras en los extremos).
+function celdasDeFila(linea) {
+  const t = linea.trim();
+  if (!/^\|?.*\|.*\|?$/.test(t) || !t.includes("|")) return null;
+  return t.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+// La fila separadora: | --- | :--: | ---: | . Es lo que confirma que las dos
+// líneas de arriba y abajo son una tabla y no texto que por casualidad tiene
+// barras.
+function esSeparadora(linea) {
+  const celdas = celdasDeFila(linea);
+  return celdas !== null && celdas.length > 0 && celdas.every((c) => /^:?-{2,}:?$/.test(c));
+}
+
 function renderMarkdown(texto) {
   const lineas = escaparHtml(texto).split("\n");
   const salida = [];
@@ -479,7 +502,9 @@ function renderMarkdown(texto) {
   };
   const cerrarLista = () => { if (lista) { salida.push(`</${lista}>`); lista = null; } };
 
-  for (const linea of lineas) {
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i];
+
     if (/^```/.test(linea)) {
       cerrarParrafo(); cerrarLista();
       salida.push(enCodigo ? "</code></pre>" : "<pre><code>");
@@ -489,6 +514,31 @@ function renderMarkdown(texto) {
     if (enCodigo) { salida.push(linea); continue; }
 
     if (!linea.trim()) { cerrarParrafo(); cerrarLista(); continue; }
+
+    // Tabla: la línea actual tiene celdas Y la siguiente es la separadora. Sin
+    // ese segundo chequeo, cualquier frase con dos barras ("A | B") se
+    // confundiría con un encabezado de tabla.
+    const encabezado = celdasDeFila(linea);
+    if (encabezado && lineas[i + 1] && esSeparadora(lineas[i + 1])) {
+      cerrarParrafo(); cerrarLista();
+      i += 2; // saltar encabezado y separadora, ya consumidos
+      const filas = [];
+      while (i < lineas.length) {
+        const celdas = celdasDeFila(lineas[i]);
+        if (!celdas) break;
+        filas.push(celdas);
+        i++;
+      }
+      i--; // el for hace su propio i++
+      salida.push(
+        '<div class="tabla-wrap"><table><thead><tr>' +
+          encabezado.map((c) => `<th>${enLinea(c)}</th>`).join("") +
+          "</tr></thead><tbody>" +
+          filas.map((f) => "<tr>" + f.map((c) => `<td>${enLinea(c)}</td>`).join("") + "</tr>").join("") +
+          "</tbody></table></div>",
+      );
+      continue;
+    }
 
     const titulo = linea.match(/^(#{1,4})\s+(.*)$/);
     if (titulo) {
