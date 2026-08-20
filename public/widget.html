@@ -423,6 +423,69 @@ async function recharter(card, d, cambios) {
   }
 }
 
+// ── Exportar ─────────────────────────────────────────────────────────────────
+// Descarga directa desde el widget, sin pasar por el host. Es la opción más
+// simple para arrancar: un <a download> con una object URL funciona en el
+// contexto del propio iframe, sin que importe el origen de la página que lo
+// embebe. Si el día de mañana un navegador empieza a bloquear descargas
+// disparadas desde iframes de terceros, la alternativa es que el widget arme
+// el blob y se lo pase al host por postMessage para que descargue él — el
+// mismo canal que ya se usa para el token — pero no vale la complejidad hasta
+// que haga falta.
+
+function nombreArchivo(titulo, extension) {
+  const slug = titulo.toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // sin acentos
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return (slug || "grafico") + "-" + iso(new Date()) + "." + extension;
+}
+
+function descargarBlob(blob, nombre) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Se revoca con demora, no en el mismo tick: revocar antes de que el
+  // navegador termine de iniciar la descarga la corta a mitad de camino.
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function exportarPNG(card) {
+  const canvas = card.querySelector("canvas");
+  if (!canvas) return;
+  const h3 = card.querySelector("h3");
+  canvas.toBlob((blob) => {
+    if (blob) descargarBlob(blob, nombreArchivo(h3 ? h3.textContent : "grafico", "png"));
+  });
+}
+
+// Una celda entra entre comillas solo si lo necesita — una regla de CSV
+// bastante estándar, y sin ella cualquier especialidad o nombre con una coma
+// ("Cardiología, adultos") correría los valores de columna al abrirlo en Excel.
+function celdaCSV(valor) {
+  const s = String(valor);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportarCSV(d) {
+  const filas = [];
+  // Se guarda como comentario, no como fila de datos: quien abre el CSV en una
+  // planilla no debería confundir "es una muestra" con un valor de la serie.
+  if (d.truncated) filas.push(`# Muestra de ${d.counted} sobre ${d.total} registros`);
+  filas.push(celdaCSV(d.group_by || "categoría") + "," + celdaCSV("valor"));
+  for (let i = 0; i < d.labels.length; i++) {
+    filas.push(celdaCSV(d.labels[i]) + "," + celdaCSV(d.values[i]));
+  }
+  // El BOM (﻿) es lo que hace que Excel en Windows abra las tildes bien en
+  // vez de mostrar caracteres sueltos — sin él, asume la codificación del
+  // sistema en lugar de UTF-8.
+  const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  descargarBlob(blob, nombreArchivo(d.title, "csv"));
+}
+
 function periodControls(card, d) {
   const ctl = document.createElement("div");
   ctl.className = "ctl";
@@ -452,6 +515,16 @@ function periodControls(card, d) {
   for (const [texto, tipo] of [["Barras", "bar"], ["Torta", "doughnut"], ["Línea", "line"]]) {
     chip(texto, () => recharter(card, d, { type: tipo }), d.type === tipo);
   }
+
+  const sep2 = document.createElement("span");
+  sep2.className = "sep";
+  ctl.appendChild(sep2);
+
+  // `d` es siempre el gráfico vigente en esta tarjeta: cambiar período o tipo
+  // no muta el objeto, arma uno nuevo y redibuja la tarjeta entera con chips
+  // nuevos, así que no hace falta ir a buscar el estado a ningún otro lado.
+  chip("⬇ PNG", () => exportarPNG(card));
+  chip("⬇ CSV", () => exportarCSV(d));
 
   return ctl;
 }
