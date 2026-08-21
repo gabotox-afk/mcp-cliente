@@ -45,6 +45,7 @@ Reglas:
 - Respondé SIEMPRE en base a lo que devuelven las herramientas. Nunca inventes cifras ni completes datos que no obtuviste.
 - NUNCA completes una lista. Si una herramienta devolvió 8 resultados, son 8: no agregues elementos para que parezca más completa, no inventes nombres de personas, y no rellenes con valores plausibles. Una lista corta y cierta sirve; una larga con inventos es peor que no responder. Si sospechás que faltan datos, decilo en vez de taparlo.
 - Nunca inventes un nombre de persona. Los nombres salen de las herramientas o no se mencionan.
+- NUNCA cuentes vos mismo leyendo el JSON crudo de una herramienta de listado. Una tool de listado puede devolver cientos de filas, y contarlas u ordenarlas a ojo da un número distinto cada vez — no es precisión, es una estimación que se ve exacta. Para "listame X agrupado/contado por Y", "cuántos hay de cada Z" o cualquier ranking, usá count_by: agrupa y cuenta por código, así el número es siempre el mismo sin importar cuántas veces se pida.
 - No uses tablas markdown. La burbuja del chat es angosta — una tabla con varias columnas queda amontonada o cortada, ilegible. Para listar varios ítems con datos cada uno, usá una lista con viñetas, un ítem por línea, con lo importante en negrita: "**kiosk1** — Autoservicio, libre, sin conectar desde el 07/08". Si de verdad hace falta una tabla (pocas columnas, muchas filas, todas del mismo tipo de dato), que sea corta y sin abusar de columnas.
 - Si ninguna herramienta puede responder la pregunta, decilo claramente en vez de aproximar.
 - Los datos de pacientes vienen anonimizados a propósito: no tienen nombre. No inventes nombres ni intentes identificar personas.
@@ -111,6 +112,36 @@ const LOCAL_TOOLS: AnthropicTool[] = [
       required: ["source", "group_by"],
     },
   },
+  {
+    name: "count_by",
+    description:
+      "Agrupa y cuenta filas de una herramienta de listado, y devuelve la lista de categorías con su " +
+      "cantidad EXACTA — ya sumadas por código, no por vos. Usala para cualquier pedido de \"listame X " +
+      "agrupado/contado por Y\", \"cuántos hay de cada Z\" o un ranking, cuando el usuario no pidió un " +
+      "gráfico. NUNCA cuentes vos mismo leyendo el JSON crudo de una tool de listado: una lista de " +
+      "cientos de filas no se puede contar a ojo de forma confiable, y vas a dar números distintos cada " +
+      "vez. Mismos parámetros que generate_chart, sin 'type' ni 'title' porque no dibuja nada.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: {
+          type: "string",
+          description:
+            "Herramienta de listado de la que salen los datos, por ejemplo 'list_attentions'. " +
+            "Tiene que empezar con list_.",
+        },
+        group_by: {
+          type: "string",
+          description:
+            "Campo de cada fila por el que agrupar y contar, por ejemplo 'professional.name' o 'status'. " +
+            "Acepta rutas anidadas con punto. Si el campo no existe, el error te dice qué rutas hay.",
+        },
+        from: { type: "string", description: "Fecha de inicio ISO (opcional)." },
+        to:   { type: "string", description: "Fecha de fin ISO (opcional)." },
+      },
+      required: ["source", "group_by"],
+    },
+  },
 ];
 
 const LOCAL_TOOL_NAMES = new Set(LOCAL_TOOLS.map((t) => t.name));
@@ -123,27 +154,52 @@ async function callLocalTool(
   input: Record<string, unknown>,
   emit: Emit,
 ): Promise<{ text: string; isError: boolean }> {
-  if (name !== "generate_chart") {
-    return { text: `Tool local desconocida: ${name}`, isError: true };
-  }
-  try {
-    const chart = await buildChart(session, input as Parameters<typeof buildChart>[1]);
-    emit({ type: "chart", chart });
+  if (name === "generate_chart") {
+    try {
+      const chart = await buildChart(session, input as Parameters<typeof buildChart>[1]);
+      emit({ type: "chart", chart });
 
-    // Al modelo le devolvemos los valores agrupados igual. No es para que los
-    // transcriba —el gráfico ya salió— sino para que pueda comentar el
-    // resultado sin tener que hacer otra consulta.
-    const resumen = chart.labels.map((l, i) => `${l}: ${chart.values[i]}`).join(", ");
-    return {
-      text:
-        `Gráfico "${chart.title}" mostrado al usuario (${chart.type}). ` +
-        `Datos: ${resumen}.` +
-        (chart.truncated ? ` OJO: es una muestra de ${chart.counted} sobre ${chart.total} registros.` : ""),
-      isError: false,
-    };
-  } catch (err) {
-    return { text: err instanceof Error ? err.message : String(err), isError: true };
+      // Al modelo le devolvemos los valores agrupados igual. No es para que los
+      // transcriba —el gráfico ya salió— sino para que pueda comentar el
+      // resultado sin tener que hacer otra consulta.
+      const resumen = chart.labels.map((l, i) => `${l}: ${chart.values[i]}`).join(", ");
+      return {
+        text:
+          `Gráfico "${chart.title}" mostrado al usuario (${chart.type}). ` +
+          `Datos: ${resumen}.` +
+          (chart.truncated ? ` OJO: es una muestra de ${chart.counted} sobre ${chart.total} registros.` : ""),
+        isError: false,
+      };
+    } catch (err) {
+      return { text: err instanceof Error ? err.message : String(err), isError: true };
+    }
   }
+
+  if (name === "count_by") {
+    // Reusa buildChart únicamente por la agregación exacta: cuenta por código
+    // (un for sobre las filas), no por el modelo leyendo JSON crudo. No emite
+    // evento de gráfico —esto es para responder en texto, no para dibujar—,
+    // así que el `type` que le pasamos es indistinto.
+    try {
+      const chart = await buildChart(session, {
+        ...(input as Parameters<typeof buildChart>[1]),
+        type: "bar",
+      });
+      const filas = chart.labels.map((l, i) => `${l}: ${chart.values[i]}`).join("\n");
+      return {
+        text:
+          `Conteo exacto (${chart.counted} de ${chart.total} filas):\n${filas}` +
+          (chart.truncated
+            ? `\n\nOJO: es una muestra de ${chart.counted} sobre ${chart.total} registros — puede no reflejar el total real.`
+            : ""),
+        isError: false,
+      };
+    } catch (err) {
+      return { text: err instanceof Error ? err.message : String(err), isError: true };
+    }
+  }
+
+  return { text: `Tool local desconocida: ${name}`, isError: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
