@@ -98,15 +98,19 @@
   .msg.md th { font-weight: 650; color: var(--ink); background: #f8fafc; }
   .msg.md tr:last-child td { border-bottom: none; }
 
-  .tools { align-self: flex-start; display: flex; flex-wrap: wrap; gap: .3rem; margin-left: 2.15rem; }
-  .tool { font-size: .76rem; color: #5a6480; background: #fff; border: 1px solid var(--line); border-radius: 999px;
-          padding: .28rem .7rem; display: inline-flex; align-items: center; gap: .45rem; box-shadow: var(--shadow-sm); }
-  .tool .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid #d5dbe8; border-top-color: var(--navy); animation: sp .7s linear infinite; }
-  .tool.ok .spin { border: none; width: auto; height: auto; animation: none; }
-  .tool.ok .spin::after { content: "✓"; color: #16a34a; font-weight: 700; }
-  .tool.fail .spin { border: none; animation: none; }
-  .tool.fail .spin::after { content: "✕"; color: #dc2626; font-weight: 700; }
-  @keyframes sp { to { transform: rotate(360deg); } }
+  /* Indicador de "escribiendo…" mientras el asistente consulta datos. No
+     nombra ninguna herramienta ni menciona MCP — el cliente no tiene por qué
+     saber que existe una capa de herramientas detrás. Es solo una señal de que
+     algo está pasando, para que una consulta de varios segundos no se lea
+     como que la pantalla se colgó. */
+  .escribiendo { align-self: flex-start; background: #fff; border: 1px solid var(--line);
+                 border-radius: 15px; border-bottom-left-radius: 5px; padding: .7rem .95rem;
+                 box-shadow: var(--shadow-sm); display: inline-flex; gap: .28rem; }
+  .escribiendo i { width: 6px; height: 6px; border-radius: 50%; background: #b7bfd6;
+                    animation: rebotar 1.1s ease-in-out infinite; }
+  .escribiendo i:nth-child(2) { animation-delay: .15s; }
+  .escribiendo i:nth-child(3) { animation-delay: .3s; }
+  @keyframes rebotar { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-3px); opacity: 1; } }
 
   .empty { margin: auto 0; text-align: center; padding: 0 .5rem; }
   .empty .big { font-size: 1.18rem; font-weight: 650; letter-spacing: -.015em; margin-bottom: .3rem; }
@@ -179,16 +183,16 @@
     <div class="mark">D</div>
     <div class="ident">
       <span class="name">Diagnóstica</span>
-      <span class="status"><i class="live"></i><span id="mode"></span></span>
+      <span class="status"><i class="live"></i>En línea</span>
     </div>
   </header>
 
   <div id="summary">
     <div class="head">
       <span class="t">Resumen</span>
+      <button type="button" class="ghost" data-days="15">15 días</button>
       <button type="button" class="ghost" data-days="30">30 días</button>
-      <button type="button" class="ghost" data-days="90">90 días</button>
-      <button type="button" class="ghost" data-days="365">12 meses</button>
+      <button type="button" class="ghost" data-days="60">60 días</button>
       <span class="rng" id="summaryRange"></span>
     </div>
     <div class="kpis" id="kpis"></div>
@@ -305,7 +309,6 @@ function arrancar() {
   }
   $("espera").style.display = "none";
   $("app").style.display = "flex";
-  $("mode").textContent = CFG.agentMode === "real" ? CFG.model : "modo stub (sin API key)";
   $("q").focus();
   restaurarHilo();
   loadSummary(30);
@@ -804,20 +807,30 @@ $("send").addEventListener("submit", async (e) => {
   addMsg("user", q);
   history.push({ role: "user", content: q });
 
-  // El contenedor de chips se crea en el momento en que aparece la primera
-  // tool, no al empezar el turno. Antes se creaba de entrada y quedaba fijo
-  // arriba de todo; ahora que el texto se parte en varias burbujas, cada grupo
-  // de tools tiene que caer en el lugar del hilo donde efectivamente ocurrió.
-  let toolBox = null;
-  const chips = {};
+  // Indicador de "escribiendo…" mientras el asistente consulta datos. No
+  // muestra qué se está consultando —el cliente no sabe qué es una
+  // herramienta ni un MCP, y no tiene por qué saberlo— solo que algo está
+  // pasando, para que una consulta de varios segundos no parezca colgada.
+  let escribiendo = null;
 
-  const chipsDe = () => {
-    if (!toolBox) {
-      toolBox = document.createElement("div");
-      toolBox.className = "tools";
-      $("log").appendChild(toolBox);
-    }
-    return toolBox;
+  const mostrarEscribiendo = () => {
+    if (escribiendo) return;
+    const row = document.createElement("div");
+    row.className = "row bot";
+    const av = document.createElement("div");
+    av.className = "av";
+    escribiendo = document.createElement("div");
+    escribiendo.className = "escribiendo";
+    escribiendo.innerHTML = "<i></i><i></i><i></i>";
+    row.append(av, escribiendo);
+    $("log").appendChild(row);
+    $("log").scrollTop = $("log").scrollHeight;
+  };
+
+  const ocultarEscribiendo = () => {
+    if (!escribiendo) return;
+    escribiendo.closest(".row").remove();
+    escribiendo = null;
   };
 
   // `acc` es el texto de la burbuja actual; `full` es todo lo que dijo el
@@ -854,12 +867,8 @@ $("send").addEventListener("submit", async (e) => {
         const ev = JSON.parse(p.slice(6));
 
         if (ev.type === "text") {
-          if (!bot) {
-            bot = addMsg("bot", "", true);
-            // Empieza una burbuja nueva: el grupo de tools anterior ya quedó
-            // atrás, así que el próximo abre su propio contenedor más abajo.
-            toolBox = null;
-          }
+          ocultarEscribiendo();
+          if (!bot) bot = addMsg("bot", "", true);
           acc += ev.text;
           full += ev.text;
           bot.innerHTML = renderMarkdown(acc);
@@ -870,28 +879,20 @@ $("send").addEventListener("submit", async (e) => {
           // Sin este corte los dos tramos quedaban pegados en el mismo párrafo
           // ("...las sesiones.**Resumen:**") como si fueran una sola frase.
           bot = null; acc = "";
-
-          const c = document.createElement("div");
-          c.className = "tool";
-          c.innerHTML = '<span class="spin"></span>' + ev.name;
-          chips[ev.id] = c;
-          chipsDe().appendChild(c);
-          $("log").scrollTop = $("log").scrollHeight;
-        } else if (ev.type === "tool_end") {
-          // Por id de llamada, no por nombre: si el modelo usa la misma tool
-          // dos veces en un turno, son dos chips distintos y cada uno tiene que
-          // resolverse solo.
-          if (chips[ev.id]) chips[ev.id].className = "tool " + (ev.ok ? "ok" : "fail");
+          mostrarEscribiendo();
         } else if (ev.type === "chart") {
           // El gráfico llega ya armado desde el backend. El modelo eligió qué
           // graficar, pero los números no pasaron por él.
+          ocultarEscribiendo();
           drawChart(ev.chart);
           // El texto que venga después va en una burbuja nueva, debajo del
           // gráfico, y no pegado al que había antes.
           bot = null; acc = "";
         } else if (ev.type === "session_expired") {
+          ocultarEscribiendo();
           sesionVencida();
         } else if (ev.type === "error") {
+          ocultarEscribiendo();
           addMsg("bot", "⚠ " + ev.message);
         }
       }
@@ -914,7 +915,7 @@ $("send").addEventListener("submit", async (e) => {
       addMsg("bot", "⚠ " + err.message);
     }
   } finally {
-    if (toolBox && !toolBox.children.length) toolBox.remove();
+    ocultarEscribiendo();
     modoEnviar();
     $("q").focus();
     $("log").scrollTop = $("log").scrollHeight;
