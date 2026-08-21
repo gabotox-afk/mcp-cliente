@@ -1,3 +1,4 @@
+import { parse } from "path";
 import { callTool, SessionExpiredError, type McpSession } from "./mcp-client.ts";
 
 // Dos cosas viven acá:
@@ -101,6 +102,7 @@ export type ChartRequest = {
   bucket?: Bucket;
   from?: string;
   to?: string;
+  label_map?: Record<string, string>;
 };
 
 export async function buildChart(session: McpSession, req: ChartRequest): Promise<ChartData> {
@@ -118,6 +120,7 @@ export async function buildChart(session: McpSession, req: ChartRequest): Promis
   const bucket: Bucket = req.bucket === "month" ? "month" : "day";
   const type: ChartType = req.type ?? (esFecha ? "line" : "bar");
   const title = req.title?.trim() || `${req.source.replace(/^list_/, "")} por ${req.group_by}`;
+  
 
   const res = await callTool(session, req.source, {
     limit: ROW_LIMIT,
@@ -203,7 +206,7 @@ export async function buildChart(session: McpSession, req: ChartRequest): Promis
     ...(esFecha ? { bucket } : {}),
     from: req.from,
     to: req.to,
-    labels: entries.map(([k]) => k),
+    labels: entries.map(([k]) => req.label_map?.[k] ?? k),
     values: entries.map(([, v]) => v),
     counted: rows.length - missing,
     total,
@@ -257,9 +260,22 @@ async function count(
 ): Promise<number> {
   const res = await callTool(session, tool, { from, to });
   if (res.isError) throw new Error(res.text);
-  const parsed = JSON.parse(res.text) as { count?: number };
-  if (typeof parsed.count !== "number") throw new Error(`${tool} no devolvió un count.`);
-  return parsed.count;
+  const parsed = JSON.parse(res.text) as { 
+    count?: number;
+    total?:number;
+    data?: {count?: number; total?:number};
+   };
+  const value =
+   typeof parsed.count === "number" ? parsed.count: 
+   typeof parsed.total === "number" ? parsed.total:
+   typeof parsed.data?.count === "number" ? parsed.data.count:
+   typeof parsed.data?.total === "number" ? parsed.data.total: undefined;
+
+  if (typeof value !== "number"){
+    console.error(`[summary] ${tool} respondio algo sin count/total. from= ${from} to=${to} -> ${res.text}`);
+     throw new Error(`${tool} no devolvió un count.`);
+  }
+  return value;
 }
 
 export async function buildSummary(

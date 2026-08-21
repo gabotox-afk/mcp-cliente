@@ -192,6 +192,7 @@
       <span class="rng" id="summaryRange"></span>
     </div>
     <div class="kpis" id="kpis"></div>
+    <div class ="box" id="summaryChartBox"></div>
   </div>
 
   <div id="log">
@@ -439,14 +440,6 @@ function periodControls(card, d) {
     chip(texto, () => recharter(card, d, { from: desde(dias), to: iso(hoy) }), d.from === desde(dias));
   }
   chip("Todo", () => recharter(card, d, { from: undefined, to: undefined }), !d.from && !d.to);
-
-  const sep = document.createElement("span");
-  sep.className = "sep";
-  ctl.appendChild(sep);
-
-  for (const [texto, tipo] of [["Barras", "bar"], ["Torta", "doughnut"], ["Línea", "line"]]) {
-    chip(texto, () => recharter(card, d, { type: tipo }), d.type === tipo);
-  }
 
   return ctl;
 }

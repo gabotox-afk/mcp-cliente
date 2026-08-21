@@ -69,7 +69,9 @@ const LOCAL_TOOLS: AnthropicTool[] = [
       "Usala cuando el usuario pida ver algo graficado, visualizado, en torta, en barras o como evolución. " +
       "No le pases números: vos elegís QUÉ graficar (qué entidad y por qué campo agrupar) y el gráfico se " +
       "construye consultando los datos directamente. Después de llamarla, comentá brevemente el hallazgo; " +
-      "no hace falta que repitas todos los valores porque el usuario ya ve el gráfico.",
+      "no hace falta que repitas todos los valores porque el usuario ya ve el gráfico."+
+      "Si el usuario no especifico que tipo de grafico quiere (barra, linea, torta) preguntaselo antes"+
+      "de llamar esta tool en vez de elegir uno por tu cuenta",
     input_schema: {
       type: "object",
       properties: {
@@ -101,6 +103,17 @@ const LOCAL_TOOLS: AnthropicTool[] = [
             "Por defecto agrupa por día.",
         },
         title: { type: "string", description: "Título del gráfico, en castellano." },
+        label_map:{
+          type : "object",
+          additionalProperties: { type : "string"},
+          description: "OBLIGATORIO pasarlo cuando los valores del campo agrupados esten en codigos tecnicos,"+
+          "esten en mayusculas, en snake_case, o sean abreviaturas (nombres de dispositivos, tipos de examen,"+
+          "estados internos, etc) - no se los muestres al cliente tal cual vienen de la base. "+
+          "Diccionario que traduce valores crudos de la base a nombres legibles para mostrar"+
+          "en el grafico, por ejemplo {'TEMPERATURE_BLUETOOTH': 'temperatura por bluetooth', 'DYNAMOMETER': 'Dinamómetro'}."+
+          "Usalo cuando el campo por el que agrupas tiene valores en mayusculas o codigos tecnicos que un usuario no entenderia"+
+          "directamente - vos sabes que significan por contexto, el grafico no.",
+        },
         from: { type: "string", description: "Fecha de inicio ISO (opcional)." },
         to:   { type: "string", description: "Fecha de fin ISO (opcional)." },
       },
