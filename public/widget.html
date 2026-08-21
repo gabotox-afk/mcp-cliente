@@ -258,7 +258,12 @@ function restaurarHilo() {
 
   history = guardado;
   $("empty")?.remove();
-  for (const m of history) addMsg(m.role === "user" ? "user" : "bot", m.content);
+  // El markdown solo aplica a lo que dijo el asistente: lo que escribió el
+  // usuario se muestra tal cual, sin interpretarle nada.
+  for (const m of history) {
+    const esUsuario = m.role === "user";
+    addMsg(esUsuario ? "user" : "bot", String(m.content ?? ""), !esUsuario);
+  }
 }
 
 const $ = (id) => document.getElementById(id);
@@ -419,6 +424,69 @@ async function recharter(card, d, cambios) {
   }
 }
 
+// ── Exportar ─────────────────────────────────────────────────────────────────
+// Descarga directa desde el widget, sin pasar por el host. Es la opción más
+// simple para arrancar: un <a download> con una object URL funciona en el
+// contexto del propio iframe, sin que importe el origen de la página que lo
+// embebe. Si el día de mañana un navegador empieza a bloquear descargas
+// disparadas desde iframes de terceros, la alternativa es que el widget arme
+// el blob y se lo pase al host por postMessage para que descargue él — el
+// mismo canal que ya se usa para el token — pero no vale la complejidad hasta
+// que haga falta.
+
+function nombreArchivo(titulo, extension) {
+  const slug = titulo.toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // sin acentos
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return (slug || "grafico") + "-" + iso(new Date()) + "." + extension;
+}
+
+function descargarBlob(blob, nombre) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Se revoca con demora, no en el mismo tick: revocar antes de que el
+  // navegador termine de iniciar la descarga la corta a mitad de camino.
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function exportarPNG(card) {
+  const canvas = card.querySelector("canvas");
+  if (!canvas) return;
+  const h3 = card.querySelector("h3");
+  canvas.toBlob((blob) => {
+    if (blob) descargarBlob(blob, nombreArchivo(h3 ? h3.textContent : "grafico", "png"));
+  });
+}
+
+// Una celda entra entre comillas solo si lo necesita — una regla de CSV
+// bastante estándar, y sin ella cualquier especialidad o nombre con una coma
+// ("Cardiología, adultos") correría los valores de columna al abrirlo en Excel.
+function celdaCSV(valor) {
+  const s = String(valor);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportarCSV(d) {
+  const filas = [];
+  // Se guarda como comentario, no como fila de datos: quien abre el CSV en una
+  // planilla no debería confundir "es una muestra" con un valor de la serie.
+  if (d.truncated) filas.push(`# Muestra de ${d.counted} sobre ${d.total} registros`);
+  filas.push(celdaCSV(d.group_by || "categoría") + "," + celdaCSV("valor"));
+  for (let i = 0; i < d.labels.length; i++) {
+    filas.push(celdaCSV(d.labels[i]) + "," + celdaCSV(d.values[i]));
+  }
+  // El BOM (﻿) es lo que hace que Excel en Windows abra las tildes bien en
+  // vez de mostrar caracteres sueltos — sin él, asume la codificación del
+  // sistema en lugar de UTF-8.
+  const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  descargarBlob(blob, nombreArchivo(d.title, "csv"));
+}
+
 function periodControls(card, d) {
   const ctl = document.createElement("div");
   ctl.className = "ctl";
@@ -440,6 +508,16 @@ function periodControls(card, d) {
     chip(texto, () => recharter(card, d, { from: desde(dias), to: iso(hoy) }), d.from === desde(dias));
   }
   chip("Todo", () => recharter(card, d, { from: undefined, to: undefined }), !d.from && !d.to);
+
+  const sep = document.createElement("span");
+  sep.className = "sep";
+  ctl.appendChild(sep);
+
+  // `d` es siempre el gráfico vigente en esta tarjeta: cambiar período no muta
+  // el objeto, arma uno nuevo y redibuja la tarjeta entera con chips nuevos,
+  // así que no hace falta ir a buscar el estado a ningún otro lado.
+  chip("⬇ PNG", () => exportarPNG(card));
+  chip("⬇ CSV", () => exportarCSV(d));
 
   return ctl;
 }
@@ -661,10 +739,14 @@ document.addEventListener("click", (e) => {
   }
 });
 
-function addMsg(cls, text) {
+// `md` marca que el texto es markdown y hay que renderizarlo. Lo usan tanto el
+// streaming como la restauración del hilo: si solo lo hiciera el streaming, al
+// recargar la página las respuestas viejas volverían a mostrar los asteriscos.
+function addMsg(cls, text, md = false) {
   const d = document.createElement("div");
-  d.className = "msg " + cls;
-  d.textContent = text;
+  d.className = "msg " + cls + (md ? " md" : "");
+  if (md) d.innerHTML = renderMarkdown(text);
+  else d.textContent = text;
 
   // La burbuja va dentro de una fila. El avatar es un hermano, no un hijo:
   // el streaming pisa el textContent de la burbuja en cada token, y si el
@@ -773,8 +855,7 @@ $("send").addEventListener("submit", async (e) => {
 
         if (ev.type === "text") {
           if (!bot) {
-            bot = addMsg("bot", "");
-            bot.classList.add("md");
+            bot = addMsg("bot", "", true);
             // Empieza una burbuja nueva: el grupo de tools anterior ya quedó
             // atrás, así que el próximo abre su propio contenedor más abajo.
             toolBox = null;
@@ -793,11 +874,14 @@ $("send").addEventListener("submit", async (e) => {
           const c = document.createElement("div");
           c.className = "tool";
           c.innerHTML = '<span class="spin"></span>' + ev.name;
-          chips[ev.name] = c;
+          chips[ev.id] = c;
           chipsDe().appendChild(c);
           $("log").scrollTop = $("log").scrollHeight;
         } else if (ev.type === "tool_end") {
-          if (chips[ev.name]) chips[ev.name].className = "tool " + (ev.ok ? "ok" : "fail");
+          // Por id de llamada, no por nombre: si el modelo usa la misma tool
+          // dos veces en un turno, son dos chips distintos y cada uno tiene que
+          // resolverse solo.
+          if (chips[ev.id]) chips[ev.id].className = "tool " + (ev.ok ? "ok" : "fail");
         } else if (ev.type === "chart") {
           // El gráfico llega ya armado desde el backend. El modelo eligió qué
           // graficar, pero los números no pasaron por él.
