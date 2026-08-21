@@ -1,4 +1,3 @@
-import { parse } from "path";
 import { callTool, SessionExpiredError, type McpSession } from "./mcp-client.ts";
 
 // Dos cosas viven acá:
@@ -260,22 +259,13 @@ async function count(
 ): Promise<number> {
   const res = await callTool(session, tool, { from, to });
   if (res.isError) throw new Error(res.text);
-  const parsed = JSON.parse(res.text) as { 
-    count?: number;
-    total?:number;
-    data?: {count?: number; total?:number};
-   };
-  const value =
-   typeof parsed.count === "number" ? parsed.count: 
-   typeof parsed.total === "number" ? parsed.total:
-   typeof parsed.data?.count === "number" ? parsed.data.count:
-   typeof parsed.data?.total === "number" ? parsed.data.total: undefined;
-
-  if (typeof value !== "number"){
-    console.error(`[summary] ${tool} respondio algo sin count/total. from= ${from} to=${to} -> ${res.text}`);
-     throw new Error(`${tool} no devolvió un count.`);
+  // El backend envuelve el número en data.total, no en un count plano.
+  const parsed = JSON.parse(res.text) as { data?: { total?: number } };
+  if (typeof parsed.data?.total !== "number") {
+    console.error(`[summary] ${tool} no devolvió un count. from=${from} to=${to} -> ${res.text}`);
+    throw new Error(`${tool} no devolvió un count.`);
   }
-  return value;
+  return parsed.data.total;
 }
 
 export async function buildSummary(
